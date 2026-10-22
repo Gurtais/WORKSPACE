@@ -1,0 +1,36 @@
+name: Memory Guard
+
+on:
+  push:
+    branches: [main, gurtais-memory]
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: gurtais-memory
+          fetch-depth: 0
+
+      - name: Check .memory exists and is complete
+        run: |
+          test -d .memory || { echo ".memory missing"; exit 1; }
+
+          for f in \
+            README.md \
+            project-context.yaml \
+            session-memory.md \
+            restore-steps.md \
+            chat-history.txt \
+            project-summary.md \
+            current-task.md \
+            last-session-state.md \
+            personal-growth.md \
+            ideas-bank.md \
+            tasks.md \
+            daily-log.md
+          do
+            test -s ".memory/$f" || { echo ".memory/$f missing or empty"; exit 1; }
+          done

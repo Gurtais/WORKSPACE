@@ -1,0 +1,28 @@
+repository:
+  owner: Gurtais
+  name: WORKSPACE
+  branch: gurtais-memory
+
+memory:
+  folder: .memory
+  purpose: "personal continuity, knowledge retention, and restore layer"
+
+files:
+  - README.md
+  - project-context.yaml
+  - session-memory.md
+  - restore-steps.md
+  - chat-history.txt
+  - project-summary.md
+  - current-task.md
+  - last-session-state.md
+  - personal-growth.md
+  - ideas-bank.md
+  - tasks.md
+  - daily-log.md
+
+rules:
+  - "keep .memory in the repository root"
+  - "never delete it"
+  - "restore it after cleanup or reset"
+  - "keep the personal context alive"
