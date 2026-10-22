@@ -1,0 +1,34 @@
+name: Memory Auto Save
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 20 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  autosave:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: gurtais-memory
+          fetch-depth: 0
+
+      - name: Ensure memory files exist
+        run: |
+          test -d .memory || { echo ".memory missing"; exit 1; }
+
+      - name: Commit memory snapshot
+        run: |
+          git config user.name "Gurtais"
+          git config user.email "gurtais@users.noreply.github.com"
+          git add .memory/
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "memory: auto-save $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push origin gurtais-memory
+          fi

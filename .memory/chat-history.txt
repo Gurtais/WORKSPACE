@@ -1,0 +1,10 @@
+Personal memory snapshot
+Repository: WORKSPACE
+Branch: gurtais-memory
+
+Use this file to keep:
+- conversation summary
+- core ideas
+- current tasks
+- decisions
+- personal growth notes
