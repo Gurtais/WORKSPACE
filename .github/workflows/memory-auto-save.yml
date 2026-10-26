@@ -11,8 +11,7 @@ permissions:
 jobs:
   autosave:
     runs-on: ubuntu-latest
-    runs-on: archlinux-latest
-    steps:
+        steps:
       - uses: actions/checkout@v4
         with:
           ref: gurtais-memory
