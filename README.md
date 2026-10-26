@@ -6,7 +6,7 @@ This repository is used as a persistent memory layer for personal development, c
 
 ## Branches
 
-- `gurtais-memory` — active personal memory branch
+- `memory` — active personal memory branch
 - `main` — clean baseline archive
 
 ## Purpose
