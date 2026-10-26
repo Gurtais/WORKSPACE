@@ -96,26 +96,41 @@ These sources provide access to tools, integrations, and extension patterns that
 WORKSPACE/
 ├── .memory/
 │   ├── state/
-│   │   └── current-session.md
+│   │   ├── current-session.md
+│   │   └── session-history.md
 │   ├── notes/
-│   │   └── personal-notes/
+│   │   ├── personal-notes/
+│   │   └── project-notes/
 │   ├── ideas/
-│   │   └── brainstorms/
+│   │   ├── brainstorms/
+│   │   └── experiments/
 │   ├── tasks/
-│   │   └── active-tasks.md
+│   │   ├── active-tasks.md
+│   │   ├── backlog.md
+│   │   └── completed-tasks.md
 │   ├── reflections/
-│   │   └── growth-log.md
+│   │   ├── growth-log.md
+│   │   └── lessons-learned.md
 │   ├── recovery/
-│   │   └── reset-instructions.md
+│   │   ├── reset-instructions.md
+│   │   ├── recovery-checklist.md
+│   │   └── environment-rebuild.md
 │   ├── tools/
-│   │   └── learned-tooling.md
+│   │   ├── learned-tooling.md
+│   │   ├── installed-tools.md
+│   │   └── setup-notes/
 │   ├── idle/
-│   │   └── idle-learning-log.md
+│   │   ├── idle-learning-log.md
+│   │   └── passive-observations.md
 │   ├── autosave/
 │   │   └── memory-snapshots/
+│   ├── assets/
+│   │   └── README.md
 │   └── README.md
 ├── dsh/
-│   └── shell-state/
+│   ├── shell-state/
+│   ├── aliases/
+│   └── commands/
 ├── dsh-dream/
 │   ├── dreams/
 │   ├── prompts/
@@ -127,31 +142,117 @@ WORKSPACE/
 │   └── runtime/
 ├── plugins/
 │   ├── integrations/
-│   └── extensions/
+│   ├── extensions/
+│   └── registry.md
 ├── jobs/
 │   ├── active/
 │   ├── completed/
-│   └── recurring/
+│   ├── recurring/
+│   └── job-log.md
 ├── multibots/
 │   ├── configs/
 │   ├── workflows/
-│   └── sessions/
+│   ├── sessions/
+│   └── orchestration.md
 ├── deepmin/
 │   ├── configs/
 │   ├── tasks/
-│   └── notes/
+│   ├── notes/
+│   └── extracted-data/
 ├── agents/
 │   ├── prompts/
 │   ├── workflows/
-│   └── memory/
+│   ├── memory/
+│   └── roles/
 ├── grok/
 │   ├── notes/
 │   ├── prompts/
-│   └── outputs/
+│   ├── outputs/
+│   └── logs/
 ├── deepseek/
 │   ├── notes/
 │   ├── prompts/
-│   └── outputs/
+│   ├── outputs/
+│   └── logs/
+├── assets/
+│   ├── icons/
+│   ├── images/
+│   └── logos/
+├── docs/
+│   ├── reference/
+│   ├── workflows/
+│   └── checklists/
 ├── README.md
 ├── .gitignore
-└── LICENSE
+├── .editorconfig
+├── LICENSE
+└── .github/
+```
+
+## Operational Domains
+
+This repository also includes several operational domains that support AI-assisted and system-level work:
+
+- `dsh/` — shell or developer environment state
+- `dsh-dream/` — dream-state, speculative workflows, and conceptual memory
+- `memories/` — structured personal and project memory storage
+- `plugins/` — integrations and extensions
+- `jobs/` — task execution tracking and recurring jobs
+- `multibots/` — multi-agent or multi-bot orchestration contexts
+- `deepmin/` — targeted mining or contextual extraction workflows
+- `agents/` — agent definitions, prompts, and memory
+- `grok/` — Grok-related notes and outputs
+- `deepseek/` — DeepSeek-related notes and outputs
+
+## Intended Use
+
+This repository is not a production application or library. It is a structured memory archive for personal continuity, operational context, and autonomous workflow intelligence.
+
+Typical use cases include:
+
+- documenting active tasks and blockers
+- capturing ideas before they are lost
+- recording lessons learned and decisions
+- preserving context after a reset or rebuild
+- managing tool-specific memory across agents and systems
+- learning and retaining tool/install patterns over time
+- capturing idle-state insights and background knowledge accumulation
+- maintaining a centralized model of system behavior and personal workflow memory
+- persisting important information automatically using `auto memory_save`
+
+## Design Principles
+
+- durability over complexity
+- plain-text storage where possible
+- low-friction capture of context
+- continuity across time and environment
+- structured memory for both human and machine use
+- autonomous tool and environment learning
+- passive knowledge retention during idle periods
+- automated memory persistence
+- minimal operational overhead
+
+## Operational Value
+
+The practical value of this repository is not in code output alone, but in continuity and self-improving operational memory. It reduces context loss, shortens re-entry time, preserves knowledge across resets, and helps an environment become more capable over time by learning tools, workflows, and patterns as they are encountered.
+
+This system is designed to make personal knowledge, project continuity, human memory, autonomous tool-learning, and dream-state memory easier to maintain over time.
+
+---
+
+## Quick Start
+
+Use the repository as a persistent memory layer and operational workspace:
+
+1. Update `.memory/` regularly.
+2. Record task and recovery context.
+3. Save tool/install knowledge in `.memory/tools/`.
+4. Keep session continuity in `.memory/state/`.
+5. Log ongoing insights in `.memory/reflections/`.
+6. Track plugin and ecosystem references in `plugins/registry.md`.
+7. Use `auto memory_save` to persist important state.
+
+## Notes
+
+This repository is designed for continuity, not for production deployment. It is a durable personal and operational memory base for ongoing work and discovery.
+

@@ -1,1 +1,31 @@
 .DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# local runtime state
+.env
+.env.*
+*.log
+
+# generated or transient artifacts
+tmp/
+temp/
+cache/
+dist/
+build/
+coverage/
+
+# large or sensitive
+*.pem
+*.key
+*.crt
+*.sqlite
+*.db
+
+# project-local memory snapshots
+.memory/autosave/memory-snapshots/*
+!.memory/autosave/memory-snapshots/.gitkeep
