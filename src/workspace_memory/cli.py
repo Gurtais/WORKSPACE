@@ -1,135 +1,543 @@
 from __future__ import annotations
 
-import argparse
-import sys
+import csv
+import hashlib
+import json
+import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Iterable
 
-from workspace_memory.storage import DEFAULT_MEMORY_DIR, MemoryStore
-
-
-def _project_root() -> Path:
-    return Path.cwd()
+from workspace_memory.models import MemoryEntry
 
 
-def _store() -> MemoryStore:
-    return MemoryStore(_project_root() / DEFAULT_MEMORY_DIR)
+DEFAULT_MEMORY_DIR = Path(".memory")
 
 
-def cmd_init(args: argparse.Namespace) -> int:
-    store = _store()
-    print(f"Initialized memory workspace at {store.root}")
-    return 0
+class MemoryStore:
+    def __init__(self, root: Path | str = DEFAULT_MEMORY_DIR):
+        self.root = Path(root)
+        self.db_path = self.root / "workspace.db"
+        self.ensure_workspace()
+        self._init_db()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def ensure_workspace(self) -> Path:
+        required = [
+            self.root,
+            self.root / "state",
+            self.root / "tasks",
+            self.root / "reflections",
+            self.root / "recovery",
+            self.root / "tools",
+            self.root / "notes",
+        ]
+        for directory in required:
+            directory.mkdir(parents=True, exist_ok=True)
+
+        readme = self.root / "README.md"
+        if not readme.exists():
+            readme.write_text(
+                "# Memory\n\nThis directory stores the durable project memory for the workspace.\n",
+                encoding="utf-8",
+            )
+        return self.root
+
+    def _init_db(self) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT NOT NULL UNIQUE,
+                    password_hash TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    display_name TEXT,
+                    role TEXT DEFAULT 'user',
+                    bio TEXT
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS profiles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL UNIQUE,
+                    display_name TEXT,
+                    role TEXT DEFAULT 'user',
+                    bio TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (user_id) REFERENCES users(id)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS entries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    kind TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    category TEXT NOT NULL DEFAULT 'general',
+                    tags TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'new',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (user_id) REFERENCES users(id)
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_entries_user_status ON entries(user_id, status)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_entries_category_created ON entries(user_id, category, created_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_entries_kind ON entries(user_id, kind)"
+            )
+            conn.commit()
+
+            self._ensure_default_user(conn)
+
+    def _ensure_default_user(self, conn: sqlite3.Connection) -> int:
+        username = "workspace"
+        user = conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
+        if user is not None:
+            return int(user["id"])
+
+        created = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        password_hash = self._hash_password("workspace")
+        cursor = conn.execute(
+            "INSERT INTO users (username, password_hash, created_at, display_name, role, bio) VALUES (?, ?, ?, ?, ?, ?)",
+            (username, password_hash, created, "Workspace User", "admin", "Default local workspace user."),
+        )
+        user_id = int(cursor.lastrowid)
+        conn.execute(
+            "INSERT INTO profiles (user_id, display_name, role, bio, created_at) VALUES (?, ?, ?, ?, ?)",
+            (user_id, "Workspace User", "admin", "Default local workspace user.", created),
+        )
+        conn.commit()
+        return user_id
+
+    def _hash_password(self, password: str) -> str:
+        return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), b"workspace-salt", 100_000).hex()
+
+    def _default_user_id(self) -> int:
+        with self._connect() as conn:
+            return self._ensure_default_user(conn)
+
+    def create_user(self, username: str, password: str, display_name: str | None = None, role: str = "user", bio: str | None = None) -> dict[str, object]:
+        if not username or not password:
+            raise ValueError("Username and password are required.")
+        created = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with self._connect() as conn:
+            try:
+                cursor = conn.execute(
+                    "INSERT INTO users (username, password_hash, created_at, display_name, role, bio) VALUES (?, ?, ?, ?, ?, ?)",
+                    (username, self._hash_password(password), created, display_name or username, role, bio or ""),
+                )
+                user_id = int(cursor.lastrowid)
+                conn.execute(
+                    "INSERT INTO profiles (user_id, display_name, role, bio, created_at) VALUES (?, ?, ?, ?, ?)",
+                    (user_id, display_name or username, role, bio or "", created),
+                )
+                conn.commit()
+            except sqlite3.IntegrityError as exc:
+                raise ValueError("Username already exists.") from exc
+        return {"id": user_id, "username": username, "display_name": display_name or username, "role": role, "bio": bio or ""}
+
+    def verify_user(self, username: str, password: str) -> dict[str, object] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id, username, password_hash, display_name, role, bio FROM users WHERE username = ?",
+                (username,),
+            ).fetchone()
+            if row is None:
+                return None
+            if row["password_hash"] != self._hash_password(password):
+                return None
+            return {
+                "id": row["id"],
+                "username": row["username"],
+                "display_name": row["display_name"] or row["username"],
+                "role": row["role"],
+                "bio": row["bio"] or "",
+            }
+
+    def get_user_profile(self, user_id: int) -> dict[str, object] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT u.id, u.username, COALESCE(p.display_name, u.display_name, u.username) as display_name, COALESCE(p.role, u.role, 'user') as role, COALESCE(p.bio, u.bio, '') as bio FROM users u LEFT JOIN profiles p ON p.user_id = u.id WHERE u.id = ?",
+                (user_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return {
+                "id": row["id"],
+                "username": row["username"],
+                "display_name": row["display_name"],
+                "role": row["role"],
+                "bio": row["bio"],
+            }
+
+    def update_profile(self, user_id: int, *, display_name: str | None, role: str | None, bio: str | None) -> dict[str, object] | None:
+        profile = self.get_user_profile(user_id)
+        if profile is None:
+            return None
+
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO profiles (user_id, display_name, role, bio, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET display_name = excluded.display_name, role = excluded.role, bio = excluded.bio",
+                (
+                    user_id,
+                    display_name or profile["display_name"],
+                    role or profile["role"],
+                    bio if bio is not None else profile["bio"],
+                    datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                ),
+            )
+            conn.execute(
+                "UPDATE users SET display_name = ?, role = ? WHERE id = ?",
+                (display_name or profile["display_name"], role or profile["role"], user_id),
+            )
+            conn.commit()
+        return self.get_user_profile(user_id)
+
+    def _tags_to_text(self, tags: Iterable[str]) -> str:
+        return ",".join(sorted({tag.strip().lower() for tag in tags if tag and tag.strip()}))
+
+    def add_note(self, text: str, category: str = "general", tags: Iterable[str] | None = None, status: str = "new", user_id: int | None = None) -> MemoryEntry:
+        entry = MemoryEntry(kind="note", text=text, category=category, tags=list(tags or []), status=status, created_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        self._insert(entry, user_id=user_id)
+        return entry
+
+    def add_task(self, text: str, category: str = "todo", tags: Iterable[str] | None = None, status: str = "new", user_id: int | None = None) -> MemoryEntry:
+        entry = MemoryEntry(kind="task", text=text, category=category, tags=list(tags or []), status=status, created_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        self._insert(entry, user_id=user_id)
+        return entry
+
+    def _insert(self, entry: MemoryEntry, *, user_id: int | None = None) -> None:
+        owner_id = user_id if user_id is not None else self._default_user_id()
+        now = entry.created_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO entries (user_id, kind, text, category, tags, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    owner_id,
+                    entry.kind,
+                    entry.text,
+                    entry.category,
+                    self._tags_to_text(entry.normalized_tags),
+                    getattr(entry, "status", "new"),
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+
+    def list_entries(
+        self,
+        kind: str | None = None,
+        category: str | None = None,
+        tag: str | None = None,
+        text_query: str | None = None,
+        status: str | None = None,
+        user_id: int | None = None,
+        sort_by: str = "created_at",
+        order: str = "desc",
+    ) -> list[MemoryEntry]:
+        sql = "SELECT id, user_id, kind, text, category, tags, status, created_at, updated_at FROM entries WHERE 1 = 1"
+        params: list[str] = []
+
+        if user_id is not None:
+            sql += " AND user_id = ?"
+            params.append(str(user_id))
+        if kind:
+            sql += " AND kind = ?"
+            params.append(kind)
+        if category:
+            sql += " AND LOWER(category) = LOWER(?)"
+            params.append(category)
+        if tag:
+            sql += " AND LOWER(tags) LIKE ?"
+            params.append(f"%{tag.lower()}%")
+        if text_query:
+            sql += " AND LOWER(text) LIKE ?"
+            params.append(f"%{text_query.lower()}%")
+        if status:
+            sql += " AND LOWER(status) = LOWER(?)"
+            params.append(status)
+
+        valid_sort = {"created_at": "created_at", "category": "category", "status": "status", "kind": "kind", "updated_at": "updated_at"}
+        sort_field = valid_sort.get(sort_by, "created_at")
+        order_sql = "DESC" if str(order).lower() == "desc" else "ASC"
+        sql += f" ORDER BY {sort_field} {order_sql}"
+
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+
+        entries: list[MemoryEntry] = []
+        for row in rows:
+            tags = [item.strip() for item in (row["tags"] or "").split(",") if item.strip()]
+            entry = MemoryEntry(
+                kind=row["kind"],
+                text=row["text"],
+                category=row["category"],
+                tags=tags,
+                status=row["status"],
+                created_at=row["created_at"],
+            )
+            entries.append(entry)
+        return entries
+
+    def update_entry(self, entry_id: int, *, user_id: int | None = None, text: str | None = None, category: str | None = None, tags: Iterable[str] | None = None, status: str | None = None) -> MemoryEntry | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id, kind, text, category, tags, status, created_at FROM entries WHERE id = ? AND (? IS NULL OR user_id = ?)",
+                (entry_id, user_id, user_id),
+            ).fetchone()
+            if row is None:
+                return None
+
+            updated_text = text if text is not None else row["text"]
+            updated_category = category if category is not None else row["category"]
+            updated_tags = self._tags_to_text(tags if tags is not None else [item.strip() for item in (row["tags"] or "").split(",") if item.strip()])
+            updated_status = status if status is not None else row["status"]
+            updated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+            conn.execute(
+                "UPDATE entries SET text = ?, category = ?, tags = ?, status = ?, updated_at = ? WHERE id = ?",
+                (updated_text, updated_category, updated_tags, updated_status, updated_at, entry_id),
+            )
+            conn.commit()
+
+        return MemoryEntry(
+            kind=row["kind"],
+            text=updated_text,
+            category=updated_category,
+            tags=[item.strip() for item in updated_tags.split(",") if item.strip()],
+            status=updated_status,
+            created_at=row["created_at"],
+        )
+
+    def delete_entry(self, entry_id: int, user_id: int | None = None) -> bool:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM entries WHERE id = ? AND (? IS NULL OR user_id = ?)",
+                (entry_id, user_id, user_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def list_categories(self, user_id: int | None = None) -> list[str]:
+        with self._connect() as conn:
+            sql = "SELECT DISTINCT category FROM entries"
+            params: list[str] = []
+            if user_id is not None:
+                sql += " WHERE user_id = ?"
+                params.append(str(user_id))
+            sql += " ORDER BY category ASC"
+            rows = conn.execute(sql, params).fetchall()
+        return [row["category"] for row in rows]
+
+    def search_by_tag(self, tag: str, user_id: int | None = None) -> list[MemoryEntry]:
+        return self.list_entries(tag=tag, user_id=user_id)
+
+    def search(self, query: str, user_id: int | None = None) -> list[MemoryEntry]:
+        return self.list_entries(text_query=query, user_id=user_id)
+
+    def status(self, user_id: int | None = None) -> dict[str, object]:
+        with self._connect() as conn:
+            sql = "SELECT COUNT(*) AS total FROM entries"
+            params: list[str] = []
+            if user_id is not None:
+                sql += " WHERE user_id = ?"
+                params.append(str(user_id))
+            notes = conn.execute(sql.replace("FROM entries", "FROM entries WHERE kind = 'note'") if False else sql, params).fetchone()
+            # fallback to dedicated counts
+            if user_id is None:
+                note_row = conn.execute("SELECT COUNT(*) AS total FROM entries WHERE kind = 'note'").fetchone()
+                task_row = conn.execute("SELECT COUNT(*) AS total FROM entries WHERE kind = 'task'").fetchone()
+            else:
+                note_row = conn.execute("SELECT COUNT(*) AS total FROM entries WHERE user_id = ? AND kind = 'note'", (user_id,)).fetchone()
+                task_row = conn.execute("SELECT COUNT(*) AS total FROM entries WHERE user_id = ? AND kind = 'task'", (user_id,)).fetchone()
+            note_count = int(note_row["total"])
+            task_count = int(task_row["total"])
+        return {
+            "root": str(self.root),
+            "notes": note_count,
+            "tasks": task_count,
+            "categories": self.list_categories(user_id=user_id),
+        }
+
+    def export_markdown(self, file_path: str | Path, user_id: int | None = None) -> Path:
+        target = Path(file_path)
+        lines = ["# WORKSPACE Memory Export\n"]
+        for category in self.list_categories(user_id=user_id):
+            lines.append(f"## {category}\n")
+            for entry in self.list_entries(category=category, user_id=user_id):
+                lines.append(f"- **{entry.kind}**: {entry.text}\n")
+                if entry.tags:
+                    lines.append(f"  Tags: {', '.join(entry.tags)}\n")
+                lines.append(f"  Status: {getattr(entry, 'status', 'new')}\n")
+                lines.append(f"  Created: {entry.created_at}\n")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("".join(lines), encoding="utf-8")
+        return target
+
+    def export_csv(self, file_path: str | Path, user_id: int | None = None) -> Path:
+        target = Path(file_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=["kind", "text", "category", "tags", "status", "created_at"])
+            writer.writeheader()
+            for entry in self.list_entries(user_id=user_id):
+                writer.writerow({
+                    "kind": entry.kind,
+                    "text": entry.text,
+                    "category": entry.category,
+                    "tags": ",".join(entry.tags),
+                    "status": getattr(entry, "status", "new"),
+                    "created_at": entry.created_at,
+                })
+        return target
+
+    def export_json(self, file_path: str | Path, user_id: int | None = None) -> Path:
+        target = Path(file_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        payload = [
+            {
+                "kind": entry.kind,
+                "text": entry.text,
+                "category": entry.category,
+                "tags": entry.tags,
+                "status": getattr(entry, "status", "new"),
+                "created_at": entry.created_at,
+            }
+            for entry in self.list_entries(user_id=user_id)
+        ]
+        target.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return target
+
+    def import_markdown(self, file_path: str | Path, user_id: int | None = None) -> int:
+        source = Path(file_path)
+        if not source.exists():
+            raise FileNotFoundError(f"Markdown file not found: {source}")
+
+        imported = 0
+        for line in source.read_text(encoding="utf-8").splitlines():
+            if not line.startswith("- "):
+                continue
+            content = line[2:].strip()
+            if "**note**:" in content.lower():
+                self.add_note(content.split(":", 1)[1].strip(), user_id=user_id)
+                imported += 1
+            elif "**task**:" in content.lower():
+                self.add_task(content.split(":", 1)[1].strip(), user_id=user_id)
+                imported += 1
+        return imported
+
+    def import_csv(self, file_path: str | Path, user_id: int | None = None) -> int:
+        source = Path(file_path)
+        if not source.exists():
+            raise FileNotFoundError(f"CSV file not found: {source}")
+
+        imported = 0
+        with source.open("r", newline="", encoding="utf-8") as handle:
+            reader = csv.DictReader(handle)
+            for row in reader:
+                text = (row.get("text") or "").strip()
+                if not text:
+                    continue
+                kind = (row.get("kind") or "note").strip()
+                category = (row.get("category") or "general").strip()
+                status = (row.get("status") or "new").strip()
+                tags = [item.strip() for item in (row.get("tags") or "").split(",") if item.strip()]
+                if kind == "task":
+                    self.add_task(text, category=category, tags=tags, status=status, user_id=user_id)
+                else:
+                    self.add_note(text, category=category, tags=tags, status=status, user_id=user_id)
+                imported += 1
+        return imported
+
+    def import_json(self, file_path: str | Path, user_id: int | None = None) -> int:
+        source = Path(file_path)
+        if not source.exists():
+            raise FileNotFoundError(f"JSON file not found: {source}")
+
+        payload = json.loads(source.read_text(encoding="utf-8"))
+        imported = 0
+        for item in payload:
+            text = (item.get("text") or "").strip()
+            if not text:
+                continue
+            kind = item.get("kind", "note")
+            category = item.get("category") or "general"
+            status = item.get("status") or "new"
+            tags = item.get("tags") or []
+            if kind == "task":
+                self.add_task(text, category=category, tags=tags, status=status, user_id=user_id)
+            else:
+                self.add_note(text, category=category, tags=tags, status=status, user_id=user_id)
+            imported += 1
+        return imported
+
+    def import_any(self, file_path: str | Path, file_format: str | None = None, user_id: int | None = None) -> int:
+        path = Path(file_path)
+        fmt = (file_format or path.suffix.lower().lstrip(".") or "markdown").lower()
+        if fmt in {"md", "markdown"}:
+            return self.import_markdown(path, user_id=user_id)
+        if fmt == "csv":
+            return self.import_csv(path, user_id=user_id)
+        if fmt in {"json", "jsn"}:
+            return self.import_json(path, user_id=user_id)
+        raise ValueError(f"Unsupported import format: {fmt}")
+
+    def export_any(self, file_path: str | Path, file_format: str | None = None, user_id: int | None = None) -> Path:
+        path = Path(file_path)
+        fmt = (file_format or path.suffix.lower().lstrip(".") or "markdown").lower()
+        if fmt in {"md", "markdown"}:
+            return self.export_markdown(path, user_id=user_id)
+        if fmt == "csv":
+            return self.export_csv(path, user_id=user_id)
+        if fmt in {"json", "jsn"}:
+            return self.export_json(path, user_id=user_id)
+        raise ValueError(f"Unsupported export format: {fmt}")
 
 
-def cmd_add_note(args: argparse.Namespace) -> int:
-    store = _store()
-    store.add_note(args.text, category=args.category, tags=args.tags)
-    print(f"Saved note in {store.notes_path()}")
-    return 0
+def ensure_workspace(memory_dir: Path | str = DEFAULT_MEMORY_DIR) -> Path:
+    return MemoryStore(memory_dir).root
 
 
-def cmd_add_task(args: argparse.Namespace) -> int:
-    store = _store()
-    store.add_task(args.text, category=args.category, tags=args.tags)
-    print(f"Saved task in {store.tasks_path()}")
-    return 0
+def append_line(file_path: Path | str, content: str) -> Path:
+    path = Path(file_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(content.rstrip() + "\n")
+    return path
 
 
-def cmd_status(args: argparse.Namespace) -> int:
-    store = _store()
-    info = store.status()
-    print(f"Memory workspace: {info['root']}")
-    print(f"Notes: {info['notes']}")
-    print(f"Tasks: {info['tasks']}")
-    print(f"Categories: {', '.join(info['categories']) if info['categories'] else 'none'}")
-    return 0
+def read_text(file_path: Path | str) -> str:
+    path = Path(file_path)
+    if not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8")
 
 
-def cmd_list(args: argparse.Namespace) -> int:
-    store = _store()
-    entries = store.list_entries(category=args.category, tag=args.tag, text_query=args.query)
-    if not entries:
-        print("No matching entries found.")
-        return 0
-    for entry in entries:
-        print(entry.to_line())
-    return 0
+def list_memory_files(memory_dir: Path | str = DEFAULT_MEMORY_DIR) -> list[Path]:
+    root = Path(memory_dir)
+    if not root.exists():
+        return []
+    return sorted(p for p in root.rglob("*") if p.is_file())
 
 
-def cmd_categories(args: argparse.Namespace) -> int:
-    store = _store()
-    categories = store.list_categories()
-    if not categories:
-        print("No categories found.")
-        return 0
-    for category in categories:
-        print(category)
-    return 0
+def summarize_entries(paths: Iterable[Path]) -> list[str]:
+    return [str(path) for path in paths]
 
 
-def cmd_export(args: argparse.Namespace) -> int:
-    store = _store()
-    target = store.export_any(args.output, args.format)
-    print(f"Exported data to {target}")
-    return 0
-
-
-def cmd_import(args: argparse.Namespace) -> int:
-    store = _store()
-    count = store.import_any(args.input, args.format)
-    print(f"Imported {count} entries from {args.input}")
-    return 0
-
-
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Manage the WORKSPACE memory archive.")
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    init_parser = subparsers.add_parser("init", help="Create the memory workspace structure")
-    init_parser.set_defaults(func=cmd_init)
-
-    note_parser = subparsers.add_parser("add-note", help="Add a categorized note to the memory archive")
-    note_parser.add_argument("text", help="The note text to persist")
-    note_parser.add_argument("--category", default="general")
-    note_parser.add_argument("--tag", dest="tags", action="append", default=[])
-    note_parser.set_defaults(func=cmd_add_note)
-
-    task_parser = subparsers.add_parser("add-task", help="Add a categorized task to the active workflow list")
-    task_parser.add_argument("text", help="The task description to persist")
-    task_parser.add_argument("--category", default="todo")
-    task_parser.add_argument("--tag", dest="tags", action="append", default=[])
-    task_parser.set_defaults(func=cmd_add_task)
-
-    status_parser = subparsers.add_parser("status", help="Show memory workspace status")
-    status_parser.set_defaults(func=cmd_status)
-
-    list_parser = subparsers.add_parser("list", help="List memory entries")
-    list_parser.add_argument("--category")
-    list_parser.add_argument("--tag")
-    list_parser.add_argument("--query", help="Text search within entries")
-    list_parser.set_defaults(func=cmd_list)
-
-    categories_parser = subparsers.add_parser("categories", help="List all categories used")
-    categories_parser.set_defaults(func=cmd_categories)
-
-    export_parser = subparsers.add_parser("export", help="Export entries to a file")
-    export_parser.add_argument("output", help="Output path")
-    export_parser.add_argument("--format", choices=["markdown", "md", "csv", "json"], default=None)
-    export_parser.set_defaults(func=cmd_export)
-
-    import_parser = subparsers.add_parser("import", help="Import entries from a file")
-    import_parser.add_argument("input", help="Input path")
-    import_parser.add_argument("--format", choices=["markdown", "md", "csv", "json"], default=None)
-    import_parser.set_defaults(func=cmd_import)
-
-    return parser
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    return args.func(args)
-
-
-if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:]))
+__all__ = ["MemoryStore", "DEFAULT_MEMORY_DIR", "ensure_workspace"]

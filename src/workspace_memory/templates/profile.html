@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WORKSPACE Login</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="login-page">
+      <div class="login-box panel">
+        <p class="eyebrow">WORKSPACE</p>
+        <h1>Sign in</h1>
+        <form id="login-form">
+          <label>
+            <span>Username</span>
+            <input type="text" name="username" placeholder="workspace" required />
+          </label>
+          <label>
+            <span>Password</span>
+            <input type="password" name="password" placeholder="workspace" required />
+          </label>
+          <button type="submit">Login</button>
+        </form>
+        <p class="helper-text">Default demo account: username <strong>workspace</strong> / password <strong>workspace</strong></p>
+      </div>
+    </div>
+
+    <script>
+      const form = document.getElementById('login-form');
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const formData = new FormData(form);
+        const payload = {
+          username: formData.get('username'),
+          password: formData.get('password'),
+        };
+
+        const response = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+          alert('Invalid username or password');
+          return;
+        }
+        window.location.href = '/';
+      });
+    </script>
+  </body>
+</html>

@@ -1,241 +1,67 @@
-:root {
-  --bg: #f3f6fb;
-  --panel: #ffffff;
-  --panel-alt: #eef4ff;
-  --text: #172334;
-  --muted: #5d6d80;
-  --primary: #3e6ecf;
-  --primary-dark: #2f4f96;
-  --border: #dfe8f3;
-  --danger: #d9534f;
-  --shadow: 0 12px 30px rgba(23, 35, 52, 0.08);
-}
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Profile</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">USER PROFILE</p>
+          <h1>{{ profile.display_name or profile.username }}</h1>
+        </div>
+        <div>
+          <a href="/" class="inline-link">Dashboard</a>
+          <a href="/api/auth/logout" class="inline-link">Logout</a>
+        </div>
+      </header>
 
-body.dark {
-  --bg: #111827;
-  --panel: #1f2937;
-  --panel-alt: #0f172a;
-  --text: #edf3ff;
-  --muted: #b0bdd2;
-  --primary: #7aa2ff;
-  --primary-dark: #5f8ff5;
-  --border: #2d3a4d;
-  --danger: #ff7a7a;
-  --shadow: 0 14px 34px rgba(0, 0, 0, 0.35);
-}
+      <main class="content">
+        <section class="panel profile-panel">
+          <h2>Edit profile</h2>
+          <form id="profile-form">
+            <label>
+              <span>Display name</span>
+              <input type="text" name="display_name" value="{{ profile.display_name or '' }}" />
+            </label>
+            <label>
+              <span>Role</span>
+              <input type="text" name="role" value="{{ profile.role or 'user' }}" />
+            </label>
+            <label>
+              <span>Bio</span>
+              <textarea name="bio" rows="5">{{ profile.bio or '' }}</textarea>
+            </label>
+            <button type="submit">Save profile</button>
+          </form>
+        </section>
+      </main>
+    </div>
 
-* { box-sizing: border-box; }
-
-body {
-  margin: 0;
-  font-family: Inter, Arial, sans-serif;
-  background: var(--bg);
-  color: var(--text);
-}
-
-button, input, textarea, select {
-  font: inherit;
-}
-
-.app-shell {
-  width: min(1180px, calc(100% - 32px));
-  margin: 0 auto;
-  padding: 24px 0 48px;
-}
-
-.topbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-}
-
-.eyebrow {
-  margin: 0 0 6px;
-  color: var(--muted);
-  letter-spacing: 0.12em;
-  font-weight: 700;
-  font-size: 0.7rem;
-}
-
-h1, h2, h3, p { margin-top: 0; }
-
-h1 {
-  margin-bottom: 0;
-  font-size: clamp(2rem, 3vw, 2.7rem);
-}
-
-.panel {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  box-shadow: var(--shadow);
-}
-
-.hero {
-  display: flex;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 28px;
-  margin-bottom: 18px;
-  background: linear-gradient(135deg, var(--primary), var(--primary-dark));
-  color: white;
-}
-
-.hero h2 { margin: 0; font-size: clamp(1.6rem, 3vw, 2.3rem); }
-
-.label {
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  font-size: 0.74rem;
-  opacity: 0.75;
-}
-
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(120px, 1fr));
-  gap: 12px;
-  min-width: 280px;
-}
-
-.stat-box {
-  background: rgba(255, 255, 255, 0.12);
-  border-radius: 16px;
-  padding: 16px 18px;
-}
-
-.stat-box span {
-  display: block;
-  font-size: 2rem;
-  font-weight: 700;
-}
-
-.stat-box small {
-  color: rgba(255,255,255,0.8);
-}
-
-.forms-panel {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 18px;
-  padding: 20px;
-  margin-bottom: 18px;
-}
-
-.form-card {
-  background: var(--panel-alt);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 18px;
-}
-
-textarea, input, select {
-  width: 100%;
-  background: var(--panel);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 11px 12px;
-}
-
-textarea {
-  min-height: 120px;
-  resize: vertical;
-}
-
-.meta-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  margin: 12px 0;
-}
-
-button {
-  border: none;
-  border-radius: 12px;
-  padding: 11px 16px;
-  background: var(--primary);
-  color: white;
-  cursor: pointer;
-  font-weight: 600;
-}
-
-button:hover { filter: brightness(1.04); }
-
-.ghost-btn, .secondary-btn {
-  background: transparent;
-  color: var(--text);
-  border: 1px solid var(--border);
-}
-
-.table-panel {
-  padding: 20px;
-}
-
-.toolbar {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  flex-wrap: wrap;
-  margin-bottom: 16px;
-}
-
-.toolbar input, .toolbar select {
-  max-width: 220px;
-}
-
-.action-row {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 16px;
-}
-
-.table-wrap {
-  overflow-x: auto;
-}
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-th, td {
-  padding: 12px 10px;
-  border-bottom: 1px solid var(--border);
-  vertical-align: top;
-  text-align: left;
-}
-
-th {
-  color: var(--muted);
-  font-weight: 700;
-}
-
-.tag-pill {
-  display: inline-block;
-  background: rgba(62,110,207,0.12);
-  color: var(--primary);
-  border-radius: 999px;
-  padding: 4px 8px;
-  margin: 2px 4px 2px 0;
-  font-size: 0.76rem;
-}
-
-.actions button {
-  padding: 6px 10px;
-  margin-right: 6px;
-  font-size: 0.8rem;
-}
-
-.delete-btn {
-  background: var(--danger);
-}
-
-@media (max-width: 700px) {
-  .hero {
-    flex-direction: column;
-  }
-  .stats-grid { min-width: 0; }
-  .meta-row { grid-template-columns: 1fr; }
-}
+    <script>
+      const form = document.getElementById('profile-form');
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const formData = new FormData(form);
+        const payload = {
+          display_name: formData.get('display_name') || '',
+          role: formData.get('role') || 'user',
+          bio: formData.get('bio') || '',
+        };
+        const response = await fetch('/api/profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!response.ok) {
+          alert('Unable to save profile');
+          return;
+        }
+        window.location.reload();
+      });
+    </script>
+  </body>
+</html>
