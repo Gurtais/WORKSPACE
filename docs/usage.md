@@ -20,18 +20,26 @@ workspace-memory add-note "Document the rollout steps" --category operations --t
 workspace-memory add-task "Prepare release notes" --category planning --tag release --tag docs
 ```
 
-### List entries
+### List entries with filtering
 
 ```bash
 workspace-memory list
 workspace-memory list --category operations
 workspace-memory list --tag release
+workspace-memory list --query rollout
 ```
 
 ### Show category inventory
 
 ```bash
 workspace-memory categories
+```
+
+### Export and import Markdown
+
+```bash
+workspace-memory export .memory/export.md
+workspace-memory import .memory/export.md
 ```
 
 ## Web app usage

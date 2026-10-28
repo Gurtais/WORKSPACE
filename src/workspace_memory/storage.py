@@ -9,12 +9,6 @@ from workspace_memory.models import MemoryEntry
 DEFAULT_MEMORY_DIR = Path(".memory")
 
 
-def now_iso() -> str:
-    from datetime import datetime, timezone
-
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
 class MemoryStore:
     def __init__(self, root: Path | str = DEFAULT_MEMORY_DIR):
         self.root = Path(root)
@@ -63,26 +57,44 @@ class MemoryStore:
         if not path.exists():
             header = "# Memory Entries\n\n" if "notes" in str(path) else "# Active Tasks\n\n"
             path.write_text(header, encoding="utf-8")
+
         with path.open("a", encoding="utf-8") as handle:
             handle.write(entry.to_line() + "\n")
 
-    def list_entries(self, kind: str | None = None, category: str | None = None, tag: str | None = None) -> list[MemoryEntry]:
+    def _load_entries_from_file(self, path: Path, kind: str) -> list[MemoryEntry]:
+        if not path.exists():
+            return []
+
+        entries: list[MemoryEntry] = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip() or line.startswith("#") or not line.startswith("-"):
+                continue
+            entries.append(self._parse_line(kind, line))
+        return entries
+
+    def list_entries(
+        self,
+        kind: str | None = None,
+        category: str | None = None,
+        tag: str | None = None,
+        text_query: str | None = None,
+    ) -> list[MemoryEntry]:
         entries: list[MemoryEntry] = []
         for target_kind, path in (("note", self.notes_path()), ("task", self.tasks_path())):
             if kind is not None and target_kind != kind:
                 continue
-            if not path.exists():
+            entries.extend(self._load_entries_from_file(path, target_kind))
+
+        filtered: list[MemoryEntry] = []
+        for entry in entries:
+            if category and entry.category.lower() != category.lower():
                 continue
-            for line in path.read_text(encoding="utf-8").splitlines():
-                if not line.strip() or line.startswith("#") or not line.startswith("-"):
-                    continue
-                entry = self._parse_line(target_kind, line)
-                if category and entry.category != category:
-                    continue
-                if tag and tag.lower() not in {value.lower() for value in entry.tags}:
-                    continue
-                entries.append(entry)
-        return entries
+            if tag and tag.lower() not in {value.lower() for value in entry.tags}:
+                continue
+            if text_query and text_query.lower() not in entry.text.lower():
+                continue
+            filtered.append(entry)
+        return filtered
 
     def list_categories(self) -> list[str]:
         categories: set[str] = set()
@@ -93,37 +105,38 @@ class MemoryStore:
     def search_by_tag(self, tag: str) -> list[MemoryEntry]:
         return self.list_entries(tag=tag)
 
+    def search(self, query: str) -> list[MemoryEntry]:
+        return self.list_entries(text_query=query)
+
     def _parse_line(self, kind: str, line: str) -> MemoryEntry:
         text = line.lstrip("-").strip()
-        if "[" in text and "]" in text:
-            # rough extraction for tags/category metadata
-            marker_end = text.find("]")
-            if marker_end > 0:
-                rest = text[marker_end + 1 :].strip()
-                if rest.startswith("["):
-                    end = rest.find("]")
-                    if end > 0:
-                        category = rest[1:end]
-                        rest = rest[end + 1 :].strip()
-                    else:
-                        category = "general"
-                else:
-                    category = "general"
+        category = "general"
+        tags: list[str] = []
+
+        i = text.find("]")
+        if i != -1:
+            # format: [timestamp] [category] [tag1,tag2] text
+            rest = text[i + 1 :].strip()
+            if rest.startswith("["):
+                category_end = rest.find("]")
+                if category_end != -1:
+                    category = rest[1:category_end].strip() or "general"
+                    rest = rest[category_end + 1 :].strip()
             else:
                 category = "general"
-            rest = rest.strip()
-            if rest.startswith("["):
-                tags_part = rest[1 : rest.find("]")]
-                rest = rest[rest.find("]") + 1 :].strip()
-                tags = [item.strip() for item in tags_part.split(",") if item.strip()]
-            else:
-                tags = []
-        else:
-            category = "general"
-            tags = []
-            rest = text
 
-        return MemoryEntry(kind=kind, text=rest, category=category, tags=tags)
+            if rest.startswith("["):
+                tags_end = rest.find("]")
+                if tags_end != -1:
+                    tags_str = rest[1:tags_end]
+                    tags = [item.strip() for item in tags_str.split(",") if item.strip()]
+                    rest = rest[tags_end + 1 :].strip()
+
+            text_body = rest
+        else:
+            text_body = text
+
+        return MemoryEntry(kind=kind, text=text_body, category=category, tags=tags)
 
     def status(self) -> dict[str, object]:
         notes = self.list_entries(kind="note")
@@ -134,6 +147,43 @@ class MemoryStore:
             "tasks": len(tasks),
             "categories": self.list_categories(),
         }
+
+    def export_markdown(self, file_path: str | Path) -> Path:
+        target = Path(file_path)
+        lines = ["# WORKSPACE Memory Export\n"]
+        for category in self.list_categories():
+            lines.append(f"## {category}\n")
+            for entry in self.list_entries(category=category):
+                lines.append(f"- **{entry.kind}**: {entry.text}\n")
+                if entry.tags:
+                    lines.append(f"  Tags: {', '.join(entry.tags)}\n")
+                lines.append(f"  Created: {entry.created_at}\n")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("".join(lines), encoding="utf-8")
+        return target
+
+    def import_markdown(self, file_path: str | Path) -> int:
+        source = Path(file_path)
+        if not source.exists():
+            raise FileNotFoundError(f"Markdown file not found: {source}")
+
+        imported = 0
+        for line in source.read_text(encoding="utf-8").splitlines():
+            if not line.startswith("- "):
+                continue
+
+            content = line[2:].strip()
+            if not content:
+                continue
+            if "**note**:" in content.lower():
+                text = content.split(":", 1)[1].strip()
+                self.add_note(text)
+                imported += 1
+            elif "**task**:" in content.lower():
+                text = content.split(":", 1)[1].strip()
+                self.add_task(text)
+                imported += 1
+        return imported
 
 
 def ensure_workspace(memory_dir: Path | str = DEFAULT_MEMORY_DIR) -> Path:
