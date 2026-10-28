@@ -16,6 +16,8 @@ const orderBy = document.getElementById('order-by');
 const themeToggle = document.getElementById('theme-toggle');
 const editorModal = document.getElementById('editor-modal');
 const editForm = document.getElementById('edit-form');
+const exportPathInput = document.getElementById('export-path');
+const importPathInput = document.getElementById('import-path');
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -229,11 +231,25 @@ editorModal.addEventListener('click', (event) => {
 });
 
 async function exportEntries(format) {
-  await api('/api/export', {
+  const exportPath = (exportPathInput.value || '.memory/export').trim();
+  const response = await api('/api/export', {
     method: 'POST',
-    body: JSON.stringify({ format, path: '.memory/export' }),
+    body: JSON.stringify({ format, path: exportPath }),
   });
-  alert(`Exported as ${format}`);
+  if (!response) return;
+  alert(`Exported to ${response.path}`);
+}
+
+async function importEntries() {
+  const importPath = (importPathInput.value || '.memory/export.md').trim();
+  const format = importPath.endsWith('.csv') ? 'csv' : importPath.endsWith('.json') ? 'json' : 'markdown';
+  const response = await api('/api/import', {
+    method: 'POST',
+    body: JSON.stringify({ format, path: importPath }),
+  });
+  if (!response) return;
+  alert(`Imported ${response.count} entries from ${response.path}`);
+  await loadDashboard();
 }
 
 async function toggleTheme() {
@@ -268,6 +284,7 @@ document.getElementById('refresh-btn').addEventListener('click', loadDashboard);
 document.getElementById('export-markdown').addEventListener('click', () => exportEntries('markdown'));
 document.getElementById('export-json').addEventListener('click', () => exportEntries('json'));
 document.getElementById('export-csv').addEventListener('click', () => exportEntries('csv'));
+document.getElementById('import-markdown').addEventListener('click', importEntries);
 
 document.addEventListener('click', async (event) => {
   const target = event.target;

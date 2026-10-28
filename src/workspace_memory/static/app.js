@@ -127,9 +127,21 @@
           </div>
 
           <div class="action-row">
+            <label class="path-input">
+              <span>Export path</span>
+              <input id="export-path" type="text" value=".memory/export" />
+            </label>
+            <label class="path-input">
+              <span>Import path</span>
+              <input id="import-path" type="text" value=".memory/export.md" />
+            </label>
+          </div>
+
+          <div class="action-row">
             <button id="export-markdown" class="secondary-btn">Export Markdown</button>
             <button id="export-json" class="secondary-btn">Export JSON</button>
             <button id="export-csv" class="secondary-btn">Export CSV</button>
+            <button id="import-markdown" class="secondary-btn">Import</button>
           </div>
 
           <div class="table-wrap">
