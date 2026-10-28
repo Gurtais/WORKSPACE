@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "workspace-memory"
-version = "0.1.0"
-description = "Durable memory and task tracking for the WORKSPACE project"
+version = "0.2.0"
+description = "Durable memory and task tracking for WORKSPACE with CLI and web tooling"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Gurtais" }]
 license = { text = "MIT" }
-keywords = ["memory", "workspace", "notes", "productivity", "cli"]
+keywords = ["memory", "workspace", "notes", "productivity", "cli", "webapp"]
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
@@ -20,13 +20,27 @@ classifiers = [
   "Operating System :: OS Independent",
 ]
 
-dependencies = []
+dependencies = [
+  "fastapi>=0.111.0",
+  "uvicorn>=0.30.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "httpx>=0.27.0",
+]
 
 [project.scripts]
 workspace-memory = "workspace_memory.cli:main"
+workspace-web = "workspace_memory.web_app:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
