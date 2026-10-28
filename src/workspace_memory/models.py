@@ -6,14 +6,15 @@ from datetime import datetime, timezone
 
 @dataclass
 class MemoryEntry:
-    kind: str
-    text: str
+    kind: str = "note"
+    text: str = ""
     category: str = "general"
     tags: list[str] = field(default_factory=list)
     status: str = "new"
     due_at: str | None = None
     reminder_at: str | None = None
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    id: int | None = None
 
     @property
     def normalized_tags(self) -> list[str]:
@@ -29,6 +30,7 @@ class MemoryEntry:
 
     def to_dict(self) -> dict[str, object]:
         return {
+            "id": self.id,
             "kind": self.kind,
             "text": self.text,
             "category": self.category,
