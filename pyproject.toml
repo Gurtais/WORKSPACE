@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "workspace-memory"
+version = "0.1.0"
+description = "Durable memory and task tracking for the WORKSPACE project"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Gurtais" }]
+license = { text = "MIT" }
+keywords = ["memory", "workspace", "notes", "productivity", "cli"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+
+dependencies = []
+
+[project.scripts]
+workspace-memory = "workspace_memory.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
