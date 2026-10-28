@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -386,24 +387,73 @@ class MemoryStore:
             "categories": self.list_categories(user_id=user_id),
         }
 
+    def _markdown_entry_pattern(self) -> re.Pattern[str]:
+        return re.compile(
+            r"^\[(?P<created>[^\]]+)\]\s+\[(?P<category>[^\]]+)\]\s+\[(?P<status>[^\]]+)\](?P<rest>.*)$"
+        )
+
+    def _parse_markdown_entry(self, line: str) -> tuple[str, str, str, list[str], str | None, str | None, str] | None:
+        value = line.strip()
+        if not value.startswith("- "):
+            return None
+        content = value[2:].strip()
+
+        alt = re.match(r"^\*\*(?P<kind>note|task)\*\*:\s*(?P<text>.+)$", content, flags=re.IGNORECASE)
+        if alt:
+            kind = alt.group("kind").lower()
+            return kind, "general", "new", [], None, None, alt.group("text").strip()
+
+        match = self._markdown_entry_pattern().match(content)
+        if not match:
+            return None
+
+        created_at = match.group("created")
+        category = match.group("category")
+        status = match.group("status")
+        rest = match.group("rest")
+        due_at = None
+        reminder_at = None
+        tags: list[str] = []
+        text = rest.strip()
+
+        while True:
+            due_match = re.match(r"^\s+\[due:(?P<value>[^\]]+)\](?P<remaining>.*)$", text)
+            if due_match:
+                due_at = due_match.group("value").strip()
+                text = due_match.group("remaining").strip()
+                continue
+
+            reminder_match = re.match(r"^\s+\[reminder:(?P<value>[^\]]+)\](?P<remaining>.*)$", text)
+            if reminder_match:
+                reminder_at = reminder_match.group("value").strip()
+                text = reminder_match.group("remaining").strip()
+                continue
+
+            tag_match = re.match(r"^\s+\[(?P<value>[^\]]+)\](?P<remaining>.*)$", text)
+            if tag_match:
+                tag_value = tag_match.group("value").strip()
+                tags = [item.strip() for item in tag_value.split(",") if item.strip()]
+                text = tag_match.group("remaining").strip()
+                continue
+            break
+
+        kind = "note"
+        if text.startswith("task:"):
+            kind = "task"
+            text = text[5:].strip()
+        elif text.startswith("note:"):
+            text = text[5:].strip()
+
+        return kind, category, status, tags, due_at, reminder_at, text.strip()
+
     def _list_for_export(self, user_id: int | None = None) -> list[MemoryEntry]:
         return self.list_entries(user_id=user_id)
 
     def export_markdown(self, file_path: str | Path, user_id: int | None = None) -> Path:
         target = Path(file_path)
-        lines = ["# WORKSPACE Memory Export\n"]
-        for category in self.list_categories(user_id=user_id):
-            lines.append(f"## {category}\n")
-            for entry in self.list_entries(category=category, user_id=user_id):
-                lines.append(f"- **{entry.kind}**: {entry.text}\n")
-                if entry.tags:
-                    lines.append(f"  Tags: {', '.join(entry.tags)}\n")
-                lines.append(f"  Status: {getattr(entry, 'status', 'new')}\n")
-                if entry.due_at:
-                    lines.append(f"  Due: {entry.due_at}\n")
-                if entry.reminder_at:
-                    lines.append(f"  Reminder: {entry.reminder_at}\n")
-                lines.append(f"  Created: {entry.created_at}\n")
+        lines: list[str] = ["# WORKSPACE Memory Export\n"]
+        for entry in self._list_for_export(user_id=user_id):
+            lines.append(f"{entry.to_line()}\n")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("".join(lines), encoding="utf-8")
         return target
@@ -453,15 +503,18 @@ class MemoryStore:
 
         imported = 0
         for line in source.read_text(encoding="utf-8").splitlines():
-            if not line.startswith("- "):
+            parsed = self._parse_markdown_entry(line)
+            if parsed is None:
                 continue
-            content = line[2:].strip()
-            if "**note**:" in content.lower():
-                self.add_note(content.split(":", 1)[1].strip(), user_id=user_id)
-                imported += 1
-            elif "**task**:" in content.lower():
-                self.add_task(content.split(":", 1)[1].strip(), user_id=user_id)
-                imported += 1
+
+            kind, category, status, tags, due_at, reminder_at, text = parsed
+            if not text:
+                continue
+            if kind == "task":
+                self.add_task(text, category=category, tags=tags, status=status, user_id=user_id, due_at=due_at, reminder_at=reminder_at)
+            else:
+                self.add_note(text, category=category, tags=tags, status=status, user_id=user_id, due_at=due_at, reminder_at=reminder_at)
+            imported += 1
         return imported
 
     def import_csv(self, file_path: str | Path, user_id: int | None = None) -> int:
