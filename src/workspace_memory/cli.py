@@ -69,14 +69,14 @@ def cmd_categories(args: argparse.Namespace) -> int:
 
 def cmd_export(args: argparse.Namespace) -> int:
     store = _store()
-    target = store.export_markdown(args.output)
-    print(f"Exported markdown to {target}")
+    target = store.export_any(args.output, args.format)
+    print(f"Exported data to {target}")
     return 0
 
 
 def cmd_import(args: argparse.Namespace) -> int:
     store = _store()
-    count = store.import_markdown(args.input)
+    count = store.import_any(args.input, args.format)
     print(f"Imported {count} entries from {args.input}")
     return 0
 
@@ -112,12 +112,14 @@ def build_parser() -> argparse.ArgumentParser:
     categories_parser = subparsers.add_parser("categories", help="List all categories used")
     categories_parser.set_defaults(func=cmd_categories)
 
-    export_parser = subparsers.add_parser("export", help="Export entries to a Markdown file")
-    export_parser.add_argument("output", help="Markdown output path")
+    export_parser = subparsers.add_parser("export", help="Export entries to a file")
+    export_parser.add_argument("output", help="Output path")
+    export_parser.add_argument("--format", choices=["markdown", "md", "csv", "json"], default=None)
     export_parser.set_defaults(func=cmd_export)
 
-    import_parser = subparsers.add_parser("import", help="Import entries from a Markdown file")
-    import_parser.add_argument("input", help="Markdown input path")
+    import_parser = subparsers.add_parser("import", help="Import entries from a file")
+    import_parser.add_argument("input", help="Input path")
+    import_parser.add_argument("--format", choices=["markdown", "md", "csv", "json"], default=None)
     import_parser.set_defaults(func=cmd_import)
 
     return parser

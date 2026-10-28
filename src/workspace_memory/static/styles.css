@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WORKSPACE Memory</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">PERSONAL MEMORY</p>
+          <h1>WORKSPACE</h1>
+        </div>
+        <button id="theme-toggle" class="ghost-btn">🌙 Dark</button>
+      </header>
+
+      <main class="content">
+        <section class="hero panel">
+          <div>
+            <p class="label">Memory dashboard</p>
+            <h2>Context that survives resets.</h2>
+          </div>
+          <div class="stats-grid">
+            <div class="stat-box">
+              <span id="note-count">0</span>
+              <small>Notes</small>
+            </div>
+            <div class="stat-box">
+              <span id="task-count">0</span>
+              <small>Tasks</small>
+            </div>
+            <div class="stat-box">
+              <span id="category-count">0</span>
+              <small>Categories</small>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel forms-panel">
+          <div class="form-card">
+            <h3>New note</h3>
+            <form id="note-form">
+              <textarea name="text" rows="4" placeholder="Write a note..." required></textarea>
+              <div class="meta-row">
+                <input type="text" name="category" value="general" placeholder="Category" />
+                <input type="text" name="tags" placeholder="tags, comma separated" />
+              </div>
+              <button type="submit">Save note</button>
+            </form>
+          </div>
+
+          <div class="form-card">
+            <h3>New task</h3>
+            <form id="task-form">
+              <textarea name="text" rows="4" placeholder="Add a task..." required></textarea>
+              <div class="meta-row">
+                <input type="text" name="category" value="todo" placeholder="Category" />
+                <input type="text" name="tags" placeholder="tags, comma separated" />
+              </div>
+              <button type="submit">Save task</button>
+            </form>
+          </div>
+        </section>
+
+        <section class="panel table-panel">
+          <div class="toolbar">
+            <input id="search-box" type="text" placeholder="Search entries..." />
+            <select id="category-filter">
+              <option value="">All categories</option>
+            </select>
+            <select id="kind-filter">
+              <option value="">All types</option>
+              <option value="note">Notes</option>
+              <option value="task">Tasks</option>
+            </select>
+            <button id="refresh-btn" class="secondary-btn">Refresh</button>
+          </div>
+
+          <div class="action-row">
+            <button id="export-markdown" class="secondary-btn">Export Markdown</button>
+            <button id="export-json" class="secondary-btn">Export JSON</button>
+            <button id="export-csv" class="secondary-btn">Export CSV</button>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Type</th>
+                  <th>Category</th>
+                  <th>Tags</th>
+                  <th>Text</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="entries-body"></tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,189 @@
+const state = {
+  entries: [],
+  status: {},
+};
+
+const entriesBody = document.getElementById('entries-body');
+const noteForm = document.getElementById('note-form');
+const taskForm = document.getElementById('task-form');
+const searchBox = document.getElementById('search-box');
+const categoryFilter = document.getElementById('category-filter');
+const kindFilter = document.getElementById('kind-filter');
+const themeToggle = document.getElementById('theme-toggle');
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...options,
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || 'Request failed');
+  }
+  return response.status === 204 ? null : response.json();
+}
+
+function parseTags(value) {
+  return value.split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+function renderTags(tags = []) {
+  if (!tags.length) return '<span class="muted">—</span>';
+  return tags.map((tag) => `<span class="tag-pill">${tag}</span>`).join('');
+}
+
+function renderEntries() {
+  const query = searchBox.value.trim().toLowerCase();
+  const category = categoryFilter.value;
+  const kind = kindFilter.value;
+
+  const filtered = state.entries.filter((entry) => {
+    const matchesQuery = !query || [entry.text, entry.category, ...(entry.tags || [])].join(' ').toLowerCase().includes(query);
+    const matchesCategory = !category || entry.category === category;
+    const matchesKind = !kind || entry.kind === kind;
+    return matchesQuery && matchesCategory && matchesKind;
+  });
+
+  entriesBody.innerHTML = filtered.map((entry) => `
+    <tr>
+      <td>${entry.kind}</td>
+      <td>${entry.category}</td>
+      <td>${renderTags(entry.tags)}</td>
+      <td>${entry.text}</td>
+      <td class="actions">
+        <button data-action="edit" data-id="${entry.id}" type="button">Edit</button>
+        <button data-action="delete" data-id="${entry.id}" class="delete-btn" type="button">Delete</button>
+      </td>
+    </tr>
+  `).join('') || '<tr><td colspan="5">No entries found.</td></tr>';
+}
+
+async function loadDashboard() {
+  state.status = await api('/api/status');
+  state.entries = await api('/api/entries');
+
+  document.getElementById('note-count').textContent = state.status.notes || 0;
+  document.getElementById('task-count').textContent = state.status.tasks || 0;
+  document.getElementById('category-count').textContent = (state.status.categories || []).length;
+
+  const categories = state.status.categories || [];
+  categoryFilter.innerHTML = '<option value="">All categories</option>' + categories.map((category) => `<option value="${category}">${category}</option>`).join('');
+
+  renderEntries();
+}
+
+async function submitEntry(kind) {
+  const form = kind === 'note' ? noteForm : taskForm;
+  const formData = new FormData(form);
+  const payload = {
+    kind,
+    text: formData.get('text').trim(),
+    category: (formData.get('category') || 'general').trim() || 'general',
+    tags: parseTags(String(formData.get('tags') || '')),
+  };
+
+  if (!payload.text) {
+    alert('Text is required');
+    return;
+  }
+
+  await api(`/api/${kind === 'note' ? 'notes' : 'tasks'}`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+  form.reset();
+  if (kind === 'note') {
+    noteForm.querySelector('[name="category"]').value = 'general';
+  } else {
+    taskForm.querySelector('[name="category"]').value = 'todo';
+  }
+  await loadDashboard();
+}
+
+async function deleteEntry(id) {
+  await api(`/api/entries/${id}`, { method: 'DELETE' });
+  await loadDashboard();
+}
+
+async function editEntry(id) {
+  const entry = state.entries.find((item) => item.id === Number(id));
+  if (!entry) return;
+
+  const text = prompt('Edit text', entry.text);
+  if (text === null) return;
+
+  const category = prompt('Edit category', entry.category || 'general');
+  if (category === null) return;
+
+  const tags = prompt('Edit tags (comma separated)', (entry.tags || []).join(', '));
+  if (tags === null) return;
+
+  await api(`/api/entries/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      text,
+      category: category || 'general',
+      tags: parseTags(tags),
+    }),
+  });
+
+  await loadDashboard();
+}
+
+async function exportEntries(format) {
+  await api('/api/export', {
+    method: 'POST',
+    body: JSON.stringify({ format, path: '.memory/export' }),
+  });
+  alert(`Exported as ${format}`);
+}
+
+async function toggleTheme() {
+  document.body.classList.toggle('dark');
+  const isDark = document.body.classList.contains('dark');
+  localStorage.setItem('workspace-theme', isDark ? 'dark' : 'light');
+  themeToggle.textContent = isDark ? '☀️ Light' : '🌙 Dark';
+}
+
+noteForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  await submitEntry('note');
+});
+
+taskForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  await submitEntry('task');
+});
+
+searchBox.addEventListener('input', renderEntries);
+categoryFilter.addEventListener('change', renderEntries);
+kindFilter.addEventListener('change', renderEntries);
+document.getElementById('refresh-btn').addEventListener('click', loadDashboard);
+
+document.getElementById('export-markdown').addEventListener('click', () => exportEntries('markdown'));
+document.getElementById('export-json').addEventListener('click', () => exportEntries('json'));
+document.getElementById('export-csv').addEventListener('click', () => exportEntries('csv'));
+
+document.addEventListener('click', async (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  const action = target.dataset.action;
+  const id = target.dataset.id;
+  if (!action || !id) return;
+  if (action === 'delete') await deleteEntry(id);
+  if (action === 'edit') await editEntry(id);
+});
+
+themeToggle.addEventListener('click', toggleTheme);
+
+const savedTheme = localStorage.getItem('workspace-theme');
+if (savedTheme === 'dark') {
+  document.body.classList.add('dark');
+  themeToggle.textContent = '☀️ Light';
+}
+
+loadDashboard().catch((error) => {
+  console.error(error);
+  alert('Unable to load workspace memory');
+});

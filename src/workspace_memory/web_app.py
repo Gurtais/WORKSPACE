@@ -1,13 +1,20 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException, Query
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 from workspace_memory.storage import DEFAULT_MEMORY_DIR, MemoryStore
 
 
-app = FastAPI(title="WORKSPACE Memory", version="0.2.0")
+app = FastAPI(title="WORKSPACE Memory", version="0.2.1")
+BASE_DIR = Path(__file__).resolve().parent
+app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 
 class MemoryPayload(BaseModel):
@@ -17,115 +24,15 @@ class MemoryPayload(BaseModel):
     kind: str = "note"
 
 
-HTML_PAGE = """
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>WORKSPACE Memory Dashboard</title>
-    <style>
-      body { font-family: Arial, sans-serif; background: #f4f7fb; color: #122033; margin: 0; }
-      .container { max-width: 1100px; margin: 0 auto; padding: 32px 20px 80px; }
-      .hero { background: linear-gradient(135deg, #1f3a5f, #4e7dc3); color: white; border-radius: 18px; padding: 32px; box-shadow: 0 12px 26px rgba(31,58,95,0.2); }
-      .hero h1 { margin: 0 0 12px; font-size: 2.5rem; }
-      .hero p { margin: 0; opacity: 0.9; }
-      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; margin-top: 28px; }
-      .card { background: white; border-radius: 14px; box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08); padding: 20px; }
-      .stat { font-size: 2rem; font-weight: bold; margin-bottom: 6px; }
-      .muted { color: #5b6b7f; }
-      table { width: 100%; border-collapse: collapse; margin-top: 18px; }
-      th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #e7edf4; }
-      .pill { display: inline-block; background: #eaf1ff; color: #2a4d7d; border-radius: 999px; padding: 4px 10px; font-size: 0.8rem; margin: 2px; }
-      .toolbar { display: flex; gap: 12px; flex-wrap: wrap; margin: 22px 0; }
-      input, select, button { padding: 10px 12px; border-radius: 10px; border: 1px solid #d9e2ef; font-size: 1rem; }
-      button { background: #4e7dc3; color: white; border: none; cursor: pointer; }
-    </style>
-  </head>
-  <body>
-    <div class="container">
-      <div class="hero">
-        <h1>WORKSPACE Memory</h1>
-        <p>Durable notes, tasks, and context for your workflow.</p>
-      </div>
-      <div class="grid">
-        <div class="card"><div class="stat" id="note-count">0</div><div class="muted">Notes</div></div>
-        <div class="card"><div class="stat" id="task-count">0</div><div class="muted">Tasks</div></div>
-        <div class="card"><div class="stat" id="category-count">0</div><div class="muted">Categories</div></div>
-      </div>
-
-      <div class="toolbar">
-        <input id="search" type="text" placeholder="Search entries..." />
-        <select id="category-filter">
-          <option value="">All categories</option>
-        </select>
-        <select id="kind-filter">
-          <option value="">All types</option>
-          <option value="note">Notes</option>
-          <option value="task">Tasks</option>
-        </select>
-        <button id="refresh">Refresh</button>
-      </div>
-
-      <div class="card">
-        <table>
-          <thead>
-            <tr><th>Type</th><th>Category</th><th>Tags</th><th>Summary</th></tr>
-          </thead>
-          <tbody id="entry-table"></tbody>
-        </table>
-      </div>
-    </div>
-
-    <script>
-      async function fetchJson(url) {
-        const res = await fetch(url);
-        return res.json();
-      }
-
-      async function loadDashboard() {
-        const status = await fetchJson('/api/status');
-        const entries = await fetchJson('/api/entries');
-        document.getElementById('note-count').textContent = status.notes ?? 0;
-        document.getElementById('task-count').textContent = status.tasks ?? 0;
-        document.getElementById('category-count').textContent = (status.categories || []).length;
-
-        const categorySelect = document.getElementById('category-filter');
-        categorySelect.innerHTML = '<option value="">All categories</option>' + (status.categories || []).map(cat => `<option value="${cat}">${cat}</option>`).join('');
-
-        const query = document.getElementById('search').value.trim().toLowerCase();
-        const category = categorySelect.value;
-        const kind = document.getElementById('kind-filter').value;
-
-        const filtered = entries.filter(entry => {
-          const matchesQuery = !query || entry.text.toLowerCase().includes(query) || (entry.tags || []).some(tag => tag.toLowerCase().includes(query));
-          const matchesCategory = !category || entry.category === category;
-          const matchesKind = !kind || entry.kind === kind;
-          return matchesQuery && matchesCategory && matchesKind;
-        });
-
-        const rows = filtered.map(entry => {
-          const tags = (entry.tags || []).map(tag => `<span class="pill">${tag}</span>`).join('');
-          return `<tr><td>${entry.kind}</td><td>${entry.category}</td><td>${tags || '<span class="muted">—</span>'}</td><td>${entry.text}</td></tr>`;
-        }).join('');
-
-        document.getElementById('entry-table').innerHTML = rows || '<tr><td colspan="4">No entries found.</td></tr>';
-      }
-
-      document.getElementById('refresh').addEventListener('click', loadDashboard);
-      document.getElementById('search').addEventListener('input', loadDashboard);
-      document.getElementById('category-filter').addEventListener('change', loadDashboard);
-      document.getElementById('kind-filter').addEventListener('change', loadDashboard);
-      loadDashboard();
-    </script>
-  </body>
-</html>
-"""
+class UpdateEntryPayload(BaseModel):
+    text: str | None = None
+    category: str | None = None
+    tags: list[str] | None = None
 
 
 @app.get("/", response_class=HTMLResponse)
-def home() -> str:
-    return HTML_PAGE
+async def home(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse("index.html", {"request": request})
 
 
 @app.get("/api/status")
@@ -142,32 +49,90 @@ def entries(
     query: str | None = None,
 ) -> list[dict[str, object]]:
     store = MemoryStore(DEFAULT_MEMORY_DIR)
-    return [entry.to_dict() for entry in store.list_entries(kind=kind, category=category, tag=tag, text_query=query)]
+    result = store.list_entries(kind=kind, category=category, tag=tag, text_query=query)
+    return [
+        {
+            "id": idx + 1,
+            "kind": entry.kind,
+            "text": entry.text,
+            "category": entry.category,
+            "tags": entry.tags,
+            "created_at": entry.created_at,
+        }
+        for idx, entry in enumerate(result)
+    ]
 
 
 @app.post("/api/notes")
 def create_note(payload: MemoryPayload) -> dict[str, object]:
-    if payload.kind != "note":
-        payload.kind = "note"
+    payload.kind = "note"
     store = MemoryStore(DEFAULT_MEMORY_DIR)
     entry = store.add_note(payload.text, category=payload.category, tags=payload.tags)
-    return entry.to_dict()
+    return {
+        "id": 1,
+        "kind": entry.kind,
+        "text": entry.text,
+        "category": entry.category,
+        "tags": entry.tags,
+        "created_at": entry.created_at,
+    }
 
 
 @app.post("/api/tasks")
 def create_task(payload: MemoryPayload) -> dict[str, object]:
-    if payload.kind != "task":
-        payload.kind = "task"
+    payload.kind = "task"
     store = MemoryStore(DEFAULT_MEMORY_DIR)
     entry = store.add_task(payload.text, category=payload.category, tags=payload.tags)
-    return entry.to_dict()
+    return {
+        "id": 1,
+        "kind": entry.kind,
+        "text": entry.text,
+        "category": entry.category,
+        "tags": entry.tags,
+        "created_at": entry.created_at,
+    }
+
+
+@app.put("/api/entries/{entry_id}")
+def update_entry(entry_id: int, payload: UpdateEntryPayload) -> dict[str, object]:
+    store = MemoryStore(DEFAULT_MEMORY_DIR)
+    row = store.update_entry(entry_id, text=payload.text, category=payload.category, tags=payload.tags)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    return {
+        "id": entry_id,
+        "kind": row.kind,
+        "text": row.text,
+        "category": row.category,
+        "tags": row.tags,
+        "created_at": row.created_at,
+    }
+
+
+@app.delete("/api/entries/{entry_id}")
+def delete_entry(entry_id: int) -> dict[str, str]:
+    store = MemoryStore(DEFAULT_MEMORY_DIR)
+    if not store.delete_entry(entry_id):
+        raise HTTPException(status_code=404, detail="Entry not found")
+    return {"status": "deleted", "id": str(entry_id)}
 
 
 @app.post("/api/export")
-def export_entries() -> dict[str, str]:
+def export_entries(payload: dict[str, str]) -> dict[str, str]:
+    format_name = (payload.get("format") or "markdown").lower()
+    target = payload.get("path") or ".memory/export"
+    if format_name in {"md", "markdown"}:
+        target = f"{target}.md" if not target.endswith(".md") else target
+    elif format_name == "csv":
+        target = f"{target}.csv" if not target.endswith(".csv") else target
+    elif format_name in {"json", "jsn"}:
+        target = f"{target}.json" if not target.endswith(".json") else target
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported export format")
+
     store = MemoryStore(DEFAULT_MEMORY_DIR)
-    path = store.export_markdown(".memory/export.md")
-    return {"path": str(path)}
+    path = store.export_any(target, format_name)
+    return {"path": str(path), "format": format_name}
 
 
 @app.post("/api/import")
@@ -175,10 +140,10 @@ def import_entries(payload: dict[str, str]) -> dict[str, object]:
     import_path = payload.get("path")
     if not import_path:
         raise HTTPException(status_code=400, detail="Import path is required")
-
+    format_name = (payload.get("format") or "markdown").lower()
     store = MemoryStore(DEFAULT_MEMORY_DIR)
-    count = store.import_markdown(import_path)
-    return {"count": count, "path": import_path}
+    count = store.import_any(import_path, format_name)
+    return {"count": count, "path": import_path, "format": format_name}
 
 
 def main() -> None:
