@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Create Account</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="login-page">
+      <div class="login-box panel">
+        <p class="eyebrow">WORKSPACE</p>
+        <h1>Create account</h1>
+        <form id="register-form">
+          <label>
+            <span>Display name</span>
+            <input type="text" name="display_name" placeholder="Your name" />
+          </label>
+          <label>
+            <span>Username</span>
+            <input type="text" name="username" placeholder="username" required />
+          </label>
+          <label>
+            <span>Password</span>
+            <input type="password" name="password" placeholder="password" required />
+          </label>
+          <button type="submit">Create account</button>
+        </form>
+        <p class="helper-text"><a href="/login">Already have an account?</a></p>
+      </div>
+    </div>
+
+    <script>
+      const form = document.getElementById('register-form');
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const formData = new FormData(form);
+        const payload = {
+          display_name: formData.get('display_name') || '',
+          username: formData.get('username'),
+          password: formData.get('password'),
+        };
+
+        const response = await fetch('/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+          const data = await response.json();
+          alert(data.detail || 'Unable to create account');
+          return;
+        }
+        window.location.href = '/';
+      });
+    </script>
+  </body>
+</html>

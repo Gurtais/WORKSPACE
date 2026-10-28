@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import sqlite3
 from datetime import datetime, timezone
@@ -40,55 +41,198 @@ class MemoryStore:
 
         readme = self.root / "README.md"
         if not readme.exists():
-            readme.write_text(
-                "# Memory\n\nThis directory stores the durable project memory for the workspace.\n",
-                encoding="utf-8",
-            )
+            readme.write_text("# Memory\n\nThis directory stores the durable project memory for the workspace.\n", encoding="utf-8")
         return self.root
 
     def _init_db(self) -> None:
         with self._connect() as conn:
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT NOT NULL UNIQUE,
+                    password_hash TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    display_name TEXT,
+                    role TEXT DEFAULT 'user',
+                    bio TEXT
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS profiles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL UNIQUE,
+                    display_name TEXT,
+                    role TEXT DEFAULT 'user',
+                    bio TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (user_id) REFERENCES users(id)
+                )
+                """
+            )
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS entries (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
                     kind TEXT NOT NULL,
                     text TEXT NOT NULL,
                     category TEXT NOT NULL DEFAULT 'general',
                     tags TEXT NOT NULL DEFAULT '',
-                    created_at TEXT NOT NULL
+                    status TEXT NOT NULL DEFAULT 'new',
+                    due_at TEXT,
+                    reminder_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (user_id) REFERENCES users(id)
                 )
                 """
             )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_entries_user_status ON entries(user_id, status)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_entries_user_due ON entries(user_id, due_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_entries_user_category ON entries(user_id, category, created_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_entries_user_kind ON entries(user_id, kind)")
             conn.commit()
 
-    def notes_path(self) -> Path:
-        return self.root / "notes" / "notes.md"
+            self._ensure_default_user(conn)
 
-    def tasks_path(self) -> Path:
-        return self.root / "tasks" / "active-tasks.md"
+    def _ensure_default_user(self, conn: sqlite3.Connection) -> int:
+        username = "workspace"
+        user = conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
+        if user is not None:
+            return int(user["id"])
 
-    def _now_iso(self) -> str:
-        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        created = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        password_hash = self._hash_password("workspace")
+        cursor = conn.execute(
+            "INSERT INTO users (username, password_hash, created_at, display_name, role, bio) VALUES (?, ?, ?, ?, ?, ?)",
+            (username, password_hash, created, "Workspace User", "admin", "Default local workspace user."),
+        )
+        user_id = int(cursor.lastrowid)
+        conn.execute(
+            "INSERT INTO profiles (user_id, display_name, role, bio, created_at) VALUES (?, ?, ?, ?, ?)",
+            (user_id, "Workspace User", "admin", "Default local workspace user.", created),
+        )
+        conn.commit()
+        return user_id
+
+    def _hash_password(self, password: str) -> str:
+        return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), b"workspace-salt", 100_000).hex()
+
+    def _default_user_id(self) -> int:
+        with self._connect() as conn:
+            return self._ensure_default_user(conn)
+
+    def create_user(self, username: str, password: str, display_name: str | None = None, role: str = "user", bio: str | None = None) -> dict[str, object]:
+        if not username or not password:
+            raise ValueError("Username and password are required.")
+        created = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with self._connect() as conn:
+            try:
+                cursor = conn.execute(
+                    "INSERT INTO users (username, password_hash, created_at, display_name, role, bio) VALUES (?, ?, ?, ?, ?, ?)",
+                    (username, self._hash_password(password), created, display_name or username, role, bio or ""),
+                )
+                user_id = int(cursor.lastrowid)
+                conn.execute(
+                    "INSERT INTO profiles (user_id, display_name, role, bio, created_at) VALUES (?, ?, ?, ?, ?)",
+                    (user_id, display_name or username, role, bio or "", created),
+                )
+                conn.commit()
+            except sqlite3.IntegrityError as exc:
+                raise ValueError("Username already exists.") from exc
+        return {"id": user_id, "username": username, "display_name": display_name or username, "role": role, "bio": bio or ""}
+
+    def verify_user(self, username: str, password: str) -> dict[str, object] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id, username, password_hash, display_name, role, bio FROM users WHERE username = ?",
+                (username,),
+            ).fetchone()
+            if row is None:
+                return None
+            if row["password_hash"] != self._hash_password(password):
+                return None
+            return {
+                "id": row["id"],
+                "username": row["username"],
+                "display_name": row["display_name"] or row["username"],
+                "role": row["role"],
+                "bio": row["bio"] or "",
+            }
+
+    def get_user_profile(self, user_id: int) -> dict[str, object] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT u.id, u.username, COALESCE(p.display_name, u.display_name, u.username) as display_name, COALESCE(p.role, u.role, 'user') as role, COALESCE(p.bio, u.bio, '') as bio FROM users u LEFT JOIN profiles p ON p.user_id = u.id WHERE u.id = ?",
+                (user_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return {
+                "id": row["id"],
+                "username": row["username"],
+                "display_name": row["display_name"],
+                "role": row["role"],
+                "bio": row["bio"],
+            }
+
+    def update_profile(self, user_id: int, *, display_name: str | None, role: str | None, bio: str | None) -> dict[str, object] | None:
+        profile = self.get_user_profile(user_id)
+        if profile is None:
+            return None
+
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO profiles (user_id, display_name, role, bio, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET display_name = excluded.display_name, role = excluded.role, bio = excluded.bio",
+                (
+                    user_id,
+                    display_name or profile["display_name"],
+                    role or profile["role"],
+                    bio if bio is not None else profile["bio"],
+                    datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                ),
+            )
+            conn.execute(
+                "UPDATE users SET display_name = ?, role = ? WHERE id = ?",
+                (display_name or profile["display_name"], role or profile["role"], user_id),
+            )
+            conn.commit()
+        return self.get_user_profile(user_id)
 
     def _tags_to_text(self, tags: Iterable[str]) -> str:
         return ",".join(sorted({tag.strip().lower() for tag in tags if tag and tag.strip()}))
 
-    def add_note(self, text: str, category: str = "general", tags: Iterable[str] | None = None) -> MemoryEntry:
-        entry = MemoryEntry(kind="note", text=text, category=category, tags=list(tags or []), created_at=self._now_iso())
-        self._insert(entry)
+    def add_note(self, text: str, category: str = "general", tags: Iterable[str] | None = None, status: str = "new", user_id: int | None = None, due_at: str | None = None, reminder_at: str | None = None) -> MemoryEntry:
+        entry = MemoryEntry(kind="note", text=text, category=category, tags=list(tags or []), status=status, due_at=due_at, reminder_at=reminder_at, created_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        self._insert(entry, user_id=user_id)
         return entry
 
-    def add_task(self, text: str, category: str = "todo", tags: Iterable[str] | None = None) -> MemoryEntry:
-        entry = MemoryEntry(kind="task", text=text, category=category, tags=list(tags or []), created_at=self._now_iso())
-        self._insert(entry)
+    def add_task(self, text: str, category: str = "todo", tags: Iterable[str] | None = None, status: str = "new", user_id: int | None = None, due_at: str | None = None, reminder_at: str | None = None) -> MemoryEntry:
+        entry = MemoryEntry(kind="task", text=text, category=category, tags=list(tags or []), status=status, due_at=due_at, reminder_at=reminder_at, created_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        self._insert(entry, user_id=user_id)
         return entry
 
-    def _insert(self, entry: MemoryEntry) -> None:
+    def _insert(self, entry: MemoryEntry, *, user_id: int | None = None) -> None:
+        owner_id = user_id if user_id is not None else self._default_user_id()
+        now = entry.created_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         with self._connect() as conn:
             conn.execute(
-                "INSERT INTO entries (kind, text, category, tags, created_at) VALUES (?, ?, ?, ?, ?)",
-                (entry.kind, entry.text, entry.category, self._tags_to_text(entry.normalized_tags), entry.created_at),
+                "INSERT INTO entries (user_id, kind, text, category, tags, status, due_at, reminder_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    owner_id,
+                    entry.kind,
+                    entry.text,
+                    entry.category,
+                    self._tags_to_text(entry.normalized_tags),
+                    getattr(entry, "status", "new"),
+                    entry.due_at,
+                    entry.reminder_at,
+                    now,
+                    now,
+                ),
             )
             conn.commit()
 
@@ -98,10 +242,21 @@ class MemoryStore:
         category: str | None = None,
         tag: str | None = None,
         text_query: str | None = None,
+        status: str | None = None,
+        user_id: int | None = None,
+        due_before: str | None = None,
+        due_after: str | None = None,
+        reminder_before: str | None = None,
+        reminder_after: str | None = None,
+        sort_by: str = "created_at",
+        order: str = "desc",
     ) -> list[MemoryEntry]:
-        sql = "SELECT id, kind, text, category, tags, created_at FROM entries WHERE 1 = 1"
+        sql = "SELECT id, user_id, kind, text, category, tags, status, due_at, reminder_at, created_at, updated_at FROM entries WHERE 1 = 1"
         params: list[str] = []
 
+        if user_id is not None:
+            sql += " AND user_id = ?"
+            params.append(str(user_id))
         if kind:
             sql += " AND kind = ?"
             params.append(kind)
@@ -114,31 +269,51 @@ class MemoryStore:
         if text_query:
             sql += " AND LOWER(text) LIKE ?"
             params.append(f"%{text_query.lower()}%")
+        if status:
+            sql += " AND LOWER(status) = LOWER(?)"
+            params.append(status)
+        if due_before:
+            sql += " AND due_at IS NOT NULL AND due_at <= ?"
+            params.append(due_before)
+        if due_after:
+            sql += " AND due_at IS NOT NULL AND due_at >= ?"
+            params.append(due_after)
+        if reminder_before:
+            sql += " AND reminder_at IS NOT NULL AND reminder_at <= ?"
+            params.append(reminder_before)
+        if reminder_after:
+            sql += " AND reminder_at IS NOT NULL AND reminder_at >= ?"
+            params.append(reminder_after)
 
-        sql += " ORDER BY created_at DESC"
+        valid_sort = {"created_at": "created_at", "category": "category", "status": "status", "kind": "kind", "updated_at": "updated_at", "due_at": "due_at"}
+        sort_field = valid_sort.get(sort_by, "created_at")
+        order_sql = "DESC" if str(order).lower() == "desc" else "ASC"
+        sql += f" ORDER BY {sort_field} {order_sql}"
 
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
 
         entries: list[MemoryEntry] = []
         for row in rows:
-            tags = [item.strip() for item in row["tags"].split(",") if item.strip()] if row["tags"] else []
-            entries.append(
-                MemoryEntry(
-                    kind=row["kind"],
-                    text=row["text"],
-                    category=row["category"],
-                    tags=tags,
-                    created_at=row["created_at"],
-                )
+            tags = [item.strip() for item in (row["tags"] or "").split(",") if item.strip()]
+            entry = MemoryEntry(
+                kind=row["kind"],
+                text=row["text"],
+                category=row["category"],
+                tags=tags,
+                status=row["status"],
+                due_at=row["due_at"],
+                reminder_at=row["reminder_at"],
+                created_at=row["created_at"],
             )
+            entries.append(entry)
         return entries
 
-    def update_entry(self, entry_id: int, *, text: str | None = None, category: str | None = None, tags: Iterable[str] | None = None) -> MemoryEntry | None:
+    def update_entry(self, entry_id: int, *, user_id: int | None = None, text: str | None = None, category: str | None = None, tags: Iterable[str] | None = None, status: str | None = None, due_at: str | None = None, reminder_at: str | None = None) -> MemoryEntry | None:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT id, kind, text, category, tags, created_at FROM entries WHERE id = ?",
-                (entry_id,),
+                "SELECT id, kind, text, category, tags, status, due_at, reminder_at, created_at FROM entries WHERE id = ? AND (? IS NULL OR user_id = ?)",
+                (entry_id, user_id, user_id),
             ).fetchone()
             if row is None:
                 return None
@@ -146,10 +321,14 @@ class MemoryStore:
             updated_text = text if text is not None else row["text"]
             updated_category = category if category is not None else row["category"]
             updated_tags = self._tags_to_text(tags if tags is not None else [item.strip() for item in (row["tags"] or "").split(",") if item.strip()])
+            updated_status = status if status is not None else row["status"]
+            updated_due = due_at if due_at is not None else row["due_at"]
+            updated_reminder = reminder_at if reminder_at is not None else row["reminder_at"]
+            updated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
             conn.execute(
-                "UPDATE entries SET text = ?, category = ?, tags = ? WHERE id = ?",
-                (updated_text, updated_category, updated_tags, entry_id),
+                "UPDATE entries SET text = ?, category = ?, tags = ?, status = ?, due_at = ?, reminder_at = ?, updated_at = ? WHERE id = ?",
+                (updated_text, updated_category, updated_tags, updated_status, updated_due, updated_reminder, updated_at, entry_id),
             )
             conn.commit()
 
@@ -158,69 +337,97 @@ class MemoryStore:
             text=updated_text,
             category=updated_category,
             tags=[item.strip() for item in updated_tags.split(",") if item.strip()],
+            status=updated_status,
+            due_at=updated_due,
+            reminder_at=updated_reminder,
             created_at=row["created_at"],
         )
 
-    def delete_entry(self, entry_id: int) -> bool:
+    def delete_entry(self, entry_id: int, user_id: int | None = None) -> bool:
         with self._connect() as conn:
-            cursor = conn.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
+            cursor = conn.execute(
+                "DELETE FROM entries WHERE id = ? AND (? IS NULL OR user_id = ?)",
+                (entry_id, user_id, user_id),
+            )
             conn.commit()
             return cursor.rowcount > 0
 
-    def list_categories(self) -> list[str]:
+    def list_categories(self, user_id: int | None = None) -> list[str]:
         with self._connect() as conn:
-            rows = conn.execute("SELECT DISTINCT category FROM entries ORDER BY category ASC").fetchall()
+            sql = "SELECT DISTINCT category FROM entries"
+            params: list[str] = []
+            if user_id is not None:
+                sql += " WHERE user_id = ?"
+                params.append(str(user_id))
+            sql += " ORDER BY category ASC"
+            rows = conn.execute(sql, params).fetchall()
         return [row["category"] for row in rows]
 
-    def search_by_tag(self, tag: str) -> list[MemoryEntry]:
-        return self.list_entries(tag=tag)
+    def search_by_tag(self, tag: str, user_id: int | None = None) -> list[MemoryEntry]:
+        return self.list_entries(tag=tag, user_id=user_id)
 
-    def search(self, query: str) -> list[MemoryEntry]:
-        return self.list_entries(text_query=query)
+    def search(self, query: str, user_id: int | None = None) -> list[MemoryEntry]:
+        return self.list_entries(text_query=query, user_id=user_id)
 
-    def status(self) -> dict[str, object]:
+    def status(self, user_id: int | None = None) -> dict[str, object]:
         with self._connect() as conn:
-            notes = conn.execute("SELECT COUNT(*) as total FROM entries WHERE kind = 'note'").fetchone()["total"]
-            tasks = conn.execute("SELECT COUNT(*) as total FROM entries WHERE kind = 'task'").fetchone()["total"]
+            if user_id is None:
+                note_row = conn.execute("SELECT COUNT(*) AS total FROM entries WHERE kind = 'note'").fetchone()
+                task_row = conn.execute("SELECT COUNT(*) AS total FROM entries WHERE kind = 'task'").fetchone()
+            else:
+                note_row = conn.execute("SELECT COUNT(*) AS total FROM entries WHERE user_id = ? AND kind = 'note'", (user_id,)).fetchone()
+                task_row = conn.execute("SELECT COUNT(*) AS total FROM entries WHERE user_id = ? AND kind = 'task'", (user_id,)).fetchone()
+            note_count = int(note_row["total"])
+            task_count = int(task_row["total"])
         return {
             "root": str(self.root),
-            "notes": notes,
-            "tasks": tasks,
-            "categories": self.list_categories(),
+            "notes": note_count,
+            "tasks": task_count,
+            "categories": self.list_categories(user_id=user_id),
         }
 
-    def export_markdown(self, file_path: str | Path) -> Path:
+    def _list_for_export(self, user_id: int | None = None) -> list[MemoryEntry]:
+        return self.list_entries(user_id=user_id)
+
+    def export_markdown(self, file_path: str | Path, user_id: int | None = None) -> Path:
         target = Path(file_path)
-        target.parent.mkdir(parents=True, exist_ok=True)
         lines = ["# WORKSPACE Memory Export\n"]
-        for category in self.list_categories():
+        for category in self.list_categories(user_id=user_id):
             lines.append(f"## {category}\n")
-            for entry in self.list_entries(category=category):
+            for entry in self.list_entries(category=category, user_id=user_id):
                 lines.append(f"- **{entry.kind}**: {entry.text}\n")
                 if entry.tags:
                     lines.append(f"  Tags: {', '.join(entry.tags)}\n")
+                lines.append(f"  Status: {getattr(entry, 'status', 'new')}\n")
+                if entry.due_at:
+                    lines.append(f"  Due: {entry.due_at}\n")
+                if entry.reminder_at:
+                    lines.append(f"  Reminder: {entry.reminder_at}\n")
                 lines.append(f"  Created: {entry.created_at}\n")
+        target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("".join(lines), encoding="utf-8")
         return target
 
-    def export_csv(self, file_path: str | Path) -> Path:
+    def export_csv(self, file_path: str | Path, user_id: int | None = None) -> Path:
         target = Path(file_path)
         target.parent.mkdir(parents=True, exist_ok=True)
         with target.open("w", newline="", encoding="utf-8") as handle:
-            writer = csv.DictWriter(handle, fieldnames=["id", "kind", "text", "category", "tags", "created_at"])
+            writer = csv.DictWriter(handle, fieldnames=["kind", "text", "category", "tags", "status", "due_at", "reminder_at", "created_at"])
             writer.writeheader()
-            for entry in self.list_entries():
+            for entry in self._list_for_export(user_id=user_id):
                 writer.writerow({
-                    "id": "",
                     "kind": entry.kind,
                     "text": entry.text,
                     "category": entry.category,
                     "tags": ",".join(entry.tags),
+                    "status": getattr(entry, "status", "new"),
+                    "due_at": entry.due_at or "",
+                    "reminder_at": entry.reminder_at or "",
                     "created_at": entry.created_at,
                 })
         return target
 
-    def export_json(self, file_path: str | Path) -> Path:
+    def export_json(self, file_path: str | Path, user_id: int | None = None) -> Path:
         target = Path(file_path)
         target.parent.mkdir(parents=True, exist_ok=True)
         payload = [
@@ -229,14 +436,17 @@ class MemoryStore:
                 "text": entry.text,
                 "category": entry.category,
                 "tags": entry.tags,
+                "status": getattr(entry, "status", "new"),
+                "due_at": entry.due_at,
+                "reminder_at": entry.reminder_at,
                 "created_at": entry.created_at,
             }
-            for entry in self.list_entries()
+            for entry in self._list_for_export(user_id=user_id)
         ]
         target.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return target
 
-    def import_markdown(self, file_path: str | Path) -> int:
+    def import_markdown(self, file_path: str | Path, user_id: int | None = None) -> int:
         source = Path(file_path)
         if not source.exists():
             raise FileNotFoundError(f"Markdown file not found: {source}")
@@ -247,14 +457,14 @@ class MemoryStore:
                 continue
             content = line[2:].strip()
             if "**note**:" in content.lower():
-                self.add_note(content.split(":", 1)[1].strip())
+                self.add_note(content.split(":", 1)[1].strip(), user_id=user_id)
                 imported += 1
             elif "**task**:" in content.lower():
-                self.add_task(content.split(":", 1)[1].strip())
+                self.add_task(content.split(":", 1)[1].strip(), user_id=user_id)
                 imported += 1
         return imported
 
-    def import_csv(self, file_path: str | Path) -> int:
+    def import_csv(self, file_path: str | Path, user_id: int | None = None) -> int:
         source = Path(file_path)
         if not source.exists():
             raise FileNotFoundError(f"CSV file not found: {source}")
@@ -268,15 +478,18 @@ class MemoryStore:
                     continue
                 kind = (row.get("kind") or "note").strip()
                 category = (row.get("category") or "general").strip()
+                status = (row.get("status") or "new").strip()
+                due_at = (row.get("due_at") or "").strip() or None
+                reminder_at = (row.get("reminder_at") or "").strip() or None
                 tags = [item.strip() for item in (row.get("tags") or "").split(",") if item.strip()]
                 if kind == "task":
-                    self.add_task(text, category=category, tags=tags)
+                    self.add_task(text, category=category, tags=tags, status=status, user_id=user_id, due_at=due_at, reminder_at=reminder_at)
                 else:
-                    self.add_note(text, category=category, tags=tags)
+                    self.add_note(text, category=category, tags=tags, status=status, user_id=user_id, due_at=due_at, reminder_at=reminder_at)
                 imported += 1
         return imported
 
-    def import_json(self, file_path: str | Path) -> int:
+    def import_json(self, file_path: str | Path, user_id: int | None = None) -> int:
         source = Path(file_path)
         if not source.exists():
             raise FileNotFoundError(f"JSON file not found: {source}")
@@ -289,34 +502,37 @@ class MemoryStore:
                 continue
             kind = item.get("kind", "note")
             category = item.get("category") or "general"
+            status = item.get("status") or "new"
+            due_at = item.get("due_at") or None
+            reminder_at = item.get("reminder_at") or None
             tags = item.get("tags") or []
             if kind == "task":
-                self.add_task(text, category=category, tags=tags)
+                self.add_task(text, category=category, tags=tags, status=status, user_id=user_id, due_at=due_at, reminder_at=reminder_at)
             else:
-                self.add_note(text, category=category, tags=tags)
+                self.add_note(text, category=category, tags=tags, status=status, user_id=user_id, due_at=due_at, reminder_at=reminder_at)
             imported += 1
         return imported
 
-    def import_any(self, file_path: str | Path, file_format: str | None = None) -> int:
+    def import_any(self, file_path: str | Path, file_format: str | None = None, user_id: int | None = None) -> int:
         path = Path(file_path)
         fmt = (file_format or path.suffix.lower().lstrip(".") or "markdown").lower()
         if fmt in {"md", "markdown"}:
-            return self.import_markdown(path)
+            return self.import_markdown(path, user_id=user_id)
         if fmt == "csv":
-            return self.import_csv(path)
+            return self.import_csv(path, user_id=user_id)
         if fmt in {"json", "jsn"}:
-            return self.import_json(path)
+            return self.import_json(path, user_id=user_id)
         raise ValueError(f"Unsupported import format: {fmt}")
 
-    def export_any(self, file_path: str | Path, file_format: str | None = None) -> Path:
+    def export_any(self, file_path: str | Path, file_format: str | None = None, user_id: int | None = None) -> Path:
         path = Path(file_path)
         fmt = (file_format or path.suffix.lower().lstrip(".") or "markdown").lower()
         if fmt in {"md", "markdown"}:
-            return self.export_markdown(path)
+            return self.export_markdown(path, user_id=user_id)
         if fmt == "csv":
-            return self.export_csv(path)
+            return self.export_csv(path, user_id=user_id)
         if fmt in {"json", "jsn"}:
-            return self.export_json(path)
+            return self.export_json(path, user_id=user_id)
         raise ValueError(f"Unsupported export format: {fmt}")
 
 

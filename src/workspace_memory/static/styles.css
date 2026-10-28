@@ -1,217 +1,348 @@
-const state = {
-  entries: [],
-  status: {},
-};
-
-const entriesBody = document.getElementById('entries-body');
-const noteForm = document.getElementById('note-form');
-const taskForm = document.getElementById('task-form');
-const searchBox = document.getElementById('search-box');
-const categoryFilter = document.getElementById('category-filter');
-const kindFilter = document.getElementById('kind-filter');
-const statusFilter = document.getElementById('status-filter');
-const sortBy = document.getElementById('sort-by');
-const orderBy = document.getElementById('order-by');
-const themeToggle = document.getElementById('theme-toggle');
-
-async function api(path, options = {}) {
-  const response = await fetch(path, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  });
-  if (response.status === 401) {
-    window.location.href = '/login';
-    return null;
-  }
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || 'Request failed');
-  }
-  return response.status === 204 ? null : response.json();
+:root {
+  --bg: #f3f6fb;
+  --panel: #ffffff;
+  --panel-alt: #eef4ff;
+  --text: #172334;
+  --muted: #5d6d80;
+  --primary: #3e6ecf;
+  --primary-dark: #2f4f96;
+  --border: #dfe8f3;
+  --danger: #d9534f;
+  --shadow: 0 12px 30px rgba(23, 35, 52, 0.08);
+  --new: #e9f8ef;
+  --active: #fff4d6;
+  --done: #e3f6ff;
+  --blocked: #ffe4e1;
 }
 
-function parseTags(value) {
-  return value.split(',').map((item) => item.trim()).filter(Boolean);
+body.dark {
+  --bg: #111827;
+  --panel: #1f2937;
+  --panel-alt: #0f172a;
+  --text: #edf3ff;
+  --muted: #b0bdd2;
+  --primary: #7aa2ff;
+  --primary-dark: #5f8ff5;
+  --border: #2d3a4d;
+  --danger: #ff7a7a;
+  --shadow: 0 14px 34px rgba(0, 0, 0, 0.35);
+  --new: #123c2a;
+  --active: #47300a;
+  --done: #102f47;
+  --blocked: #472421;
 }
 
-function renderTags(tags = []) {
-  if (!tags.length) return '<span class="muted">—</span>';
-  return tags.map((tag) => `<span class="tag-pill">${tag}</span>`).join('');
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: Inter, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
 }
 
-function renderEntries() {
-  const query = searchBox.value.trim().toLowerCase();
-  const category = categoryFilter.value;
-  const kind = kindFilter.value;
-  const status = statusFilter.value;
-
-  const filtered = state.entries.filter((entry) => {
-    const rawText = [entry.text, entry.category, entry.status, ...(entry.tags || [])].join(' ').toLowerCase();
-    const matchesQuery = !query || rawText.includes(query);
-    const matchesCategory = !category || entry.category === category;
-    const matchesKind = !kind || entry.kind === kind;
-    const matchesStatus = !status || entry.status === status;
-    return matchesQuery && matchesCategory && matchesKind && matchesStatus;
-  });
-
-  entriesBody.innerHTML = filtered.map((entry) => `
-    <tr>
-      <td>${entry.kind}</td>
-      <td>${entry.category}</td>
-      <td>${renderTags(entry.tags)}</td>
-      <td><span class="status-pill ${entry.status || 'new'}">${entry.status || 'new'}</span><br>${entry.text}</td>
-      <td>${entry.created_at || ''}</td>
-      <td class="actions">
-        <button data-action="edit" data-id="${entry.id}" type="button">Edit</button>
-        <button data-action="delete" data-id="${entry.id}" class="delete-btn" type="button">Delete</button>
-      </td>
-    </tr>
-  `).join('') || '<tr><td colspan="6">No entries found.</td></tr>';
+button, input, textarea, select {
+  font: inherit;
 }
 
-async function loadDashboard() {
-  const status = await api('/api/status');
-  const entries = await api(`/api/entries?status=${encodeURIComponent(statusFilter.value || '')}&category=${encodeURIComponent(categoryFilter.value || '')}&query=${encodeURIComponent(searchBox.value.trim())}&sort_by=${encodeURIComponent(sortBy.value || 'created_at')}&order=${encodeURIComponent(orderBy.value || 'desc')}`);
-  if (!status || !entries) return;
+a { color: var(--primary); text-decoration: none; }
+.inline-link { margin-left: 12px; }
 
-  state.status = status;
-  state.entries = entries;
-
-  document.getElementById('note-count').textContent = status.notes || 0;
-  document.getElementById('task-count').textContent = status.tasks || 0;
-  document.getElementById('category-count').textContent = (status.categories || []).length;
-
-  const categories = status.categories || [];
-  categoryFilter.innerHTML = '<option value="">All categories</option>' + categories.map((category) => `<option value="${category}">${category}</option>`).join('');
-
-  renderEntries();
+.app-shell {
+  width: min(1180px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 24px 0 48px;
 }
 
-async function submitEntry(kind) {
-  const form = kind === 'note' ? noteForm : taskForm;
-  const formData = new FormData(form);
-  const payload = {
-    kind,
-    text: formData.get('text').trim(),
-    category: (formData.get('category') || 'general').trim() || 'general',
-    tags: parseTags(String(formData.get('tags') || '')),
-    status: (formData.get('status') || 'new').trim() || 'new',
-  };
-
-  if (!payload.text) {
-    alert('Text is required');
-    return;
-  }
-
-  await api(`/api/${kind === 'note' ? 'notes' : 'tasks'}`, {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-
-  form.reset();
-  if (kind === 'note') {
-    noteForm.querySelector('[name="category"]').value = 'general';
-    noteForm.querySelector('[name="status"]').value = 'new';
-  } else {
-    taskForm.querySelector('[name="category"]').value = 'todo';
-    taskForm.querySelector('[name="status"]').value = 'new';
-  }
-  await loadDashboard();
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
 }
 
-async function deleteEntry(id) {
-  await api(`/api/entries/${id}`, { method: 'DELETE' });
-  await loadDashboard();
+.eyebrow {
+  margin: 0 0 6px;
+  color: var(--muted);
+  letter-spacing: 0.12em;
+  font-weight: 700;
+  font-size: 0.7rem;
 }
 
-async function editEntry(id) {
-  const entry = state.entries.find((item) => item.id === Number(id));
-  if (!entry) return;
+h1, h2, h3, p { margin-top: 0; }
 
-  const text = prompt('Edit text', entry.text);
-  if (text === null) return;
+h1 { margin-bottom: 0; font-size: clamp(2rem, 3vw, 2.7rem); }
 
-  const category = prompt('Edit category', entry.category || 'general');
-  if (category === null) return;
-
-  const status = prompt('Edit status (new, active, done, blocked)', entry.status || 'new');
-  if (status === null) return;
-
-  const tags = prompt('Edit tags (comma separated)', (entry.tags || []).join(', '));
-  if (tags === null) return;
-
-  await api(`/api/entries/${id}`, {
-    method: 'PUT',
-    body: JSON.stringify({
-      text,
-      category: category || 'general',
-      status: status || 'new',
-      tags: parseTags(tags),
-    }),
-  });
-
-  await loadDashboard();
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  box-shadow: var(--shadow);
 }
 
-async function exportEntries(format) {
-  await api('/api/export', {
-    method: 'POST',
-    body: JSON.stringify({ format, path: '.memory/export' }),
-  });
-  alert(`Exported as ${format}`);
+.hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 28px;
+  margin-bottom: 18px;
+  background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+  color: white;
 }
 
-async function toggleTheme() {
-  document.body.classList.toggle('dark');
-  const isDark = document.body.classList.contains('dark');
-  localStorage.setItem('workspace-theme', isDark ? 'dark' : 'light');
-  themeToggle.textContent = isDark ? '☀️ Light' : '🌙 Dark';
+.hero h2 { margin: 0; font-size: clamp(1.6rem, 3vw, 2.3rem); }
+
+.label {
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 0.74rem;
+  opacity: 0.75;
 }
 
-noteForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  await submitEntry('note');
-});
-
-taskForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  await submitEntry('task');
-});
-
-searchBox.addEventListener('input', async () => {
-  await loadDashboard();
-});
-
-categoryFilter.addEventListener('change', loadDashboard);
-kindFilter.addEventListener('change', loadDashboard);
-statusFilter.addEventListener('change', loadDashboard);
-sortBy.addEventListener('change', loadDashboard);
-orderBy.addEventListener('change', loadDashboard);
-
-document.getElementById('refresh-btn').addEventListener('click', loadDashboard);
-document.getElementById('export-markdown').addEventListener('click', () => exportEntries('markdown'));
-document.getElementById('export-json').addEventListener('click', () => exportEntries('json'));
-document.getElementById('export-csv').addEventListener('click', () => exportEntries('csv'));
-
-document.addEventListener('click', async (event) => {
-  const target = event.target;
-  if (!(target instanceof HTMLElement)) return;
-  const action = target.dataset.action;
-  const id = target.dataset.id;
-  if (!action || !id) return;
-  if (action === 'delete') await deleteEntry(id);
-  if (action === 'edit') await editEntry(id);
-});
-
-themeToggle.addEventListener('click', toggleTheme);
-
-const savedTheme = localStorage.getItem('workspace-theme');
-if (savedTheme === 'dark') {
-  document.body.classList.add('dark');
-  themeToggle.textContent = '☀️ Light';
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  gap: 12px;
+  min-width: 280px;
 }
 
-loadDashboard().catch((error) => {
-  console.error(error);
-  alert('Unable to load workspace memory');
-});
+.stat-box {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  padding: 16px 18px;
+}
+
+.stat-box span {
+  display: block;
+  font-size: 2rem;
+  font-weight: 700;
+}
+
+.stat-box small {
+  color: rgba(255,255,255,0.8);
+}
+
+.forms-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 18px;
+  padding: 20px;
+  margin-bottom: 18px;
+}
+
+.form-card {
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 18px;
+}
+
+textarea, input, select {
+  width: 100%;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 11px 12px;
+}
+
+textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.meta-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.meta-row.compact {
+  grid-template-columns: 1fr;
+}
+
+button {
+  border: none;
+  border-radius: 12px;
+  padding: 11px 16px;
+  background: var(--primary);
+  color: white;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+button:hover { filter: brightness(1.04); }
+
+.ghost-btn, .secondary-btn {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.table-panel {
+  padding: 20px;
+}
+
+.toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.toolbar input, .toolbar select {
+  max-width: 220px;
+}
+
+.action-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th, td {
+  padding: 12px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+  text-align: left;
+}
+
+th {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.tag-pill {
+  display: inline-block;
+  background: rgba(62,110,207,0.12);
+  color: var(--primary);
+  border-radius: 999px;
+  padding: 4px 8px;
+  margin: 2px 4px 2px 0;
+  font-size: 0.76rem;
+}
+
+.status-pill {
+  display: inline-block;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  padding: 4px 8px;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+}
+
+.status-pill.new { background: var(--new); color: #1c6d4c; }
+.status-pill.active { background: var(--active); color: #7a5400; }
+.status-pill.done { background: var(--done); color: #1a5c8d; }
+.status-pill.blocked { background: var(--blocked); color: #993738; }
+
+.actions button {
+  padding: 6px 10px;
+  margin-right: 6px;
+  font-size: 0.8rem;
+}
+
+.delete-btn {
+  background: var(--danger);
+}
+
+.login-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.login-box {
+  width: min(420px, 100%);
+  padding: 26px;
+}
+
+.login-box label {
+  display: block;
+  margin-bottom: 16px;
+}
+
+.login-box span {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.helper-text {
+  margin-top: 14px;
+  color: var(--muted);
+}
+
+.profile-panel {
+  padding: 24px;
+}
+
+.profile-panel form {
+  display: grid;
+  gap: 16px;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.modal.hidden {
+  display: none;
+}
+
+.modal-card {
+  width: min(640px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 22px;
+  box-shadow: var(--shadow);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 18px;
+}
+
+#edit-form {
+  display: grid;
+  gap: 16px;
+}
+
+#edit-form label {
+  display: block;
+}
+
+#edit-form label span {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+@media (max-width: 700px) {
+  .hero { flex-direction: column; }
+  .stats-grid { min-width: 0; }
+  .meta-row { grid-template-columns: 1fr; }
+}
