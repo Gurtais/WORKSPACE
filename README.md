@@ -1,54 +1,110 @@
-# WORKSPACE Memory CLI
+# WORKSPACE Memory
 
-This project is a durable, text-first memory workspace for capturing notes, tasks, and operational context across sessions.
+A lightweight, durable memory workspace for notes, tasks, deadlines, and operational context.
 
-## Overview
+## What it does
 
-The repository combines a persistent memory archive with a lightweight Python-based interface so you can keep structured project context without relying on a complex database or app stack.
+WORKSPACE Memory is designed for text-first context retention. It stores information in a local `.memory/` directory so notes, tasks, and reminders remain easy to review, export, and reconstruct across sessions.
 
-## Features
-
-- maintain durable notes and tasks in `.memory/`
-- support categories and tags for organization
-- expose commands through a Python CLI
-- provide a small FastAPI-based web app for browsing memory state
-- keep everything easy to back up and review in plain text
-- export and import entries as Markdown for portability
-- dashboard view with search and filtering
+Included functionality:
+- durable notes and tasks in `.memory/`
+- category and tag organization
+- task status tracking (`new`, `active`, `done`, `blocked`)
+- optional `due_at` and `reminder_at` timestamps
+- CLI commands for common operations
+- FastAPI web dashboard for browsing and editing memory entries
+- Markdown, CSV, and JSON import/export for portability
 
 ## Quick start
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -e .
+python -m pip install --upgrade pip
+pip install -e .[dev]
+```
+
+Initialize a workspace:
+
+```bash
 workspace-memory init
+```
+
+Create an item:
+
+```bash
 workspace-memory add-note "Review deployment checklist" --category ops --tag deployment --tag review
-workspace-memory add-task "Draft the launch checklist" --category planning --tag launch
+workspace-memory add-task "Draft the launch checklist" --category planning --tag launch --status active --due 2026-11-01
+```
+
+List entries:
+
+```bash
 workspace-memory list --category ops
 workspace-memory categories
+workspace-memory status
+```
+
+Export memory:
+
+```bash
 workspace-memory export .memory/export.md
+workspace-memory export .memory/export.json --format json
 ```
 
 ## Web app
+
+Start the dashboard:
 
 ```bash
 workspace-web
 ```
 
 Then open:
-
 - http://localhost:8000/
 - http://localhost:8000/api/status
 - http://localhost:8000/api/entries
 
-## Files and folders
+The dashboard supports:
+- creating notes and tasks
+- filtering by category, kind, and status
+- editing entries inline
+- deleting entries
+- exporting to Markdown, JSON, or CSV
+- importing from a selected path
 
-- `.memory/` stores the archive
+## Local development workflow
+
+```bash
+source .venv/bin/activate
+pytest
+workspace-web
+```
+
+If you want to test the package directly without installing globally:
+
+```bash
+python -m workspace_memory
+```
+
+## Folder layout
+
+- `.memory/` stores the persistent memory archive
 - `src/workspace_memory/` contains the Python package
-- `docs/` contains project documentation and usage examples
-- `tests/` contains pytest coverage for CLI and storage behavior
+- `tests/` covers storage and import/export behavior
+- `docs/` contains release and smoke-test notes
+
+## Suggested smoke test
+
+Before tagging a release, confirm the following:
+
+1. `workspace-memory init` creates the workspace structure.
+2. `workspace-memory add-note` stores a note with tags and category metadata.
+3. `workspace-memory add-task` stores a task with status and due date metadata.
+4. `workspace-memory export .memory/export.md` writes a readable markdown file.
+5. `workspace-web` loads the dashboard without auth errors when using a valid session.
+6. Importing a generated markdown export restores the same metadata.
 
 ## Notes
 
-This project remains intentionally lightweight and durable. It is designed for continuity, context retention, and operational knowledge, not for heavy production workload handling.
+This project is intentionally lightweight and durable. It favors plain-text storage, fast local workflows, and easy review over heavy production infrastructure.
