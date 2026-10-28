@@ -5,7 +5,7 @@ import hashlib
 import json
 import re
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -164,6 +164,44 @@ class MemoryStore:
     def _default_user_id(self) -> int:
         with self._connect() as conn:
             return self._ensure_default_user(conn)
+
+    @staticmethod
+    def _coerce_datetime(value: str | None) -> datetime | None:
+        if not value:
+            return None
+        text = value.strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            return datetime.fromisoformat(text)
+        except ValueError:
+            try:
+                return datetime.strptime(text, "%Y-%m-%d")
+            except ValueError:
+                return None
+
+    def _is_overdue(self, entry: MemoryEntry) -> bool:
+        if entry.status in {"done", "blocked"}:
+            return False
+        due_at = self._coerce_datetime(entry.due_at)
+        if due_at is None:
+            return False
+        today = datetime.now(timezone.utc).date()
+        due_date = due_at.date()
+        return due_date < today
+
+    def _is_upcoming(self, entry: MemoryEntry, days: int = 7) -> bool:
+        if entry.status in {"done", "blocked"}:
+            return False
+        due_at = self._coerce_datetime(entry.due_at)
+        if due_at is None:
+            return False
+        today = datetime.now(timezone.utc).date()
+        due_date = due_at.date()
+        cutoff = today + timedelta(days=days)
+        return today <= due_date <= cutoff
 
     def create_user(self, username: str, password: str, display_name: str | None = None, role: str = "user", bio: str | None = None) -> dict[str, object]:
         if not username or not password:
@@ -384,6 +422,27 @@ class MemoryStore:
             )
             entries.append(entry)
         return entries
+
+    def list_overdue_tasks(self, user_id: int | None = None) -> list[MemoryEntry]:
+        entries = self.list_entries(user_id=user_id, sort_by="due_at", order="asc")
+        return [entry for entry in entries if entry.kind == "task" and self._is_overdue(entry)]
+
+    def list_upcoming_tasks(self, user_id: int | None = None, days: int = 7) -> list[MemoryEntry]:
+        entries = self.list_entries(user_id=user_id, sort_by="due_at", order="asc")
+        return [entry for entry in entries if entry.kind == "task" and self._is_upcoming(entry, days=days)]
+
+    def task_summary(self, user_id: int | None = None) -> dict[str, object]:
+        entries = self.list_entries(user_id=user_id)
+        tasks = [entry for entry in entries if entry.kind == "task"]
+        counts = {status: 0 for status in sorted(VALID_ENTRY_STATUSES)}
+        for entry in tasks:
+            counts[entry.status] = counts.get(entry.status, 0) + 1
+        return {
+            "total_tasks": len(tasks),
+            "overdue": len(self.list_overdue_tasks(user_id=user_id)),
+            "upcoming": len(self.list_upcoming_tasks(user_id=user_id, days=7)),
+            "status_counts": counts,
+        }
 
     def update_entry(self, entry_id: int, *, user_id: int | None = None, text: str | None = None, category: str | None = None, tags: Iterable[str] | None = None, status: str | None = None, due_at: str | None = None, reminder_at: str | None = None) -> MemoryEntry | None:
         with self._connect() as conn:
@@ -727,4 +786,4 @@ __all__ = [
 ]
 
 
-# Batch 5: validation and edge-case hardening for entry creation, updates, and import/export flows.
+# Batch A: task lifecycle and reminder automation helpers.
