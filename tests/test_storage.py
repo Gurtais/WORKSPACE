@@ -41,3 +41,49 @@ def test_categories_and_tag_filter(tmp_path):
 
     ops_entries = store.list_entries(category="ops")
     assert len(ops_entries) >= 2
+
+
+def test_markdown_round_trip_keeps_kind_metadata(tmp_path):
+    source_store = MemoryStore(tmp_path / ".memory-source")
+    task = source_store.add_task(
+        "Ship release candidate",
+        category="ops",
+        tags=["release", "qa"],
+        status="active",
+        due_at="2026-11-01",
+        reminder_at="2026-10-30T09:00:00Z",
+    )
+
+    export_path = tmp_path / "memory.md"
+    source_store.export_markdown(export_path)
+    content = export_path.read_text(encoding="utf-8")
+
+    assert "[task]" in content
+    assert "[due:2026-11-01]" in content
+    assert "[reminder:2026-10-30T09:00:00Z]" in content
+
+    imported_store = MemoryStore(tmp_path / ".memory-import")
+    count = imported_store.import_markdown(export_path)
+    assert count == 1
+
+    imported = imported_store.list_entries()
+    assert len(imported) == 1
+    assert imported[0].kind == "task"
+    assert imported[0].text == task.text
+    assert imported[0].category == "ops"
+    assert imported[0].status == "active"
+    assert imported[0].due_at == "2026-11-01"
+    assert imported[0].reminder_at == "2026-10-30T09:00:00Z"
+    assert "release" in imported[0].tags
+    assert "qa" in imported[0].tags
+
+
+__all__ = [
+    "test_memory_store_init",
+    "test_add_note_and_task_with_tags",
+    "test_categories_and_tag_filter",
+    "test_markdown_round_trip_keeps_kind_metadata",
+]
+
+
+# This keeps the file focused on the storage behavior used by the app and export/import round-trips.

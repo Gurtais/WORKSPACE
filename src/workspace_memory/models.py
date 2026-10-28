@@ -24,8 +24,8 @@ class MemoryEntry:
         due = f" [due:{self.due_at}]" if self.due_at else ""
         reminder = f" [reminder:{self.reminder_at}]" if self.reminder_at else ""
         if tags:
-            return f"- [{self.created_at}] [{self.category}] [{self.status}]{due}{reminder} [{tags}] {self.text}"
-        return f"- [{self.created_at}] [{self.category}] [{self.status}]{due}{reminder} {self.text}"
+            return f"- [{self.kind.lower()}] [{self.created_at}] [{self.category}] [{self.status}]{due}{reminder} [{tags}] {self.text}"
+        return f"- [{self.kind.lower()}] [{self.created_at}] [{self.category}] [{self.status}]{due}{reminder} {self.text}"
 
     def to_dict(self) -> dict[str, object]:
         return {
