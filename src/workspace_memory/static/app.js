@@ -1,258 +1,202 @@
-const state = {
-  entries: [],
-  status: {},
-  editingId: null,
-};
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WORKSPACE Memory</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">PERSONAL MEMORY</p>
+          <h1>WORKSPACE</h1>
+        </div>
+        <div>
+          <a href="/profile" class="inline-link">Profile</a>
+          <a href="/api/auth/logout" class="inline-link">Logout</a>
+          <button id="theme-toggle" class="ghost-btn">🌙 Dark</button>
+        </div>
+      </header>
 
-const entriesBody = document.getElementById('entries-body');
-const noteForm = document.getElementById('note-form');
-const taskForm = document.getElementById('task-form');
-const searchBox = document.getElementById('search-box');
-const categoryFilter = document.getElementById('category-filter');
-const kindFilter = document.getElementById('kind-filter');
-const statusFilter = document.getElementById('status-filter');
-const sortBy = document.getElementById('sort-by');
-const orderBy = document.getElementById('order-by');
-const themeToggle = document.getElementById('theme-toggle');
-const editorModal = document.getElementById('editor-modal');
-const editForm = document.getElementById('edit-form');
+      <main class="content">
+        <section class="hero panel">
+          <div>
+            <p class="label">Memory dashboard</p>
+            <h2>Context that survives resets.</h2>
+            <p>Signed in as <strong>{{ profile.display_name or profile.username }}</strong></p>
+          </div>
+          <div class="stats-grid">
+            <div class="stat-box">
+              <span id="note-count">0</span>
+              <small>Notes</small>
+            </div>
+            <div class="stat-box">
+              <span id="task-count">0</span>
+              <small>Tasks</small>
+            </div>
+            <div class="stat-box">
+              <span id="category-count">0</span>
+              <small>Categories</small>
+            </div>
+          </div>
+        </section>
 
-async function api(path, options = {}) {
-  const response = await fetch(path, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  });
-  if (response.status === 401) {
-    window.location.href = '/login';
-    return null;
-  }
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || 'Request failed');
-  }
-  return response.status === 204 ? null : response.json();
-}
+        <section class="panel forms-panel">
+          <div class="form-card">
+            <h3>New note</h3>
+            <form id="note-form">
+              <textarea name="text" rows="4" placeholder="Write a note..." required></textarea>
+              <div class="meta-row">
+                <input type="text" name="category" value="general" placeholder="Category" />
+                <input type="text" name="tags" placeholder="tags, comma separated" />
+              </div>
+              <div class="meta-row">
+                <input type="date" name="due_at" />
+                <input type="datetime-local" name="reminder_at" />
+              </div>
+              <div class="meta-row compact">
+                <select name="status">
+                  <option value="new">new</option>
+                  <option value="active">active</option>
+                  <option value="done">done</option>
+                  <option value="blocked">blocked</option>
+                </select>
+              </div>
+              <button type="submit">Save note</button>
+            </form>
+          </div>
 
-function parseTags(value) {
-  return value.split(',').map((item) => item.trim()).filter(Boolean);
-}
+          <div class="form-card">
+            <h3>New task</h3>
+            <form id="task-form">
+              <textarea name="text" rows="4" placeholder="Add a task..." required></textarea>
+              <div class="meta-row">
+                <input type="text" name="category" value="todo" placeholder="Category" />
+                <input type="text" name="tags" placeholder="tags, comma separated" />
+              </div>
+              <div class="meta-row">
+                <input type="date" name="due_at" />
+                <input type="datetime-local" name="reminder_at" />
+              </div>
+              <div class="meta-row compact">
+                <select name="status">
+                  <option value="new">new</option>
+                  <option value="active">active</option>
+                  <option value="done">done</option>
+                  <option value="blocked">blocked</option>
+                </select>
+              </div>
+              <button type="submit">Save task</button>
+            </form>
+          </div>
+        </section>
 
-function renderTags(tags = []) {
-  if (!tags.length) return '<span class="muted">—</span>';
-  return tags.map((tag) => `<span class="tag-pill">${tag}</span>`).join('');
-}
+        <section class="panel table-panel">
+          <div class="toolbar">
+            <input id="search-box" type="text" placeholder="Search entries..." />
+            <select id="category-filter">
+              <option value="">All categories</option>
+            </select>
+            <select id="kind-filter">
+              <option value="">All types</option>
+              <option value="note">Notes</option>
+              <option value="task">Tasks</option>
+            </select>
+            <select id="status-filter">
+              <option value="">All statuses</option>
+              <option value="new">new</option>
+              <option value="active">active</option>
+              <option value="done">done</option>
+              <option value="blocked">blocked</option>
+            </select>
+            <select id="sort-by">
+              <option value="created_at">Created</option>
+              <option value="category">Category</option>
+              <option value="status">Status</option>
+              <option value="kind">Type</option>
+              <option value="due_at">Due date</option>
+            </select>
+            <select id="order-by">
+              <option value="desc">Descending</option>
+              <option value="asc">Ascending</option>
+            </select>
+            <button id="refresh-btn" class="secondary-btn">Refresh</button>
+            <button id="reset-filters" class="secondary-btn">Reset</button>
+          </div>
 
-function formatDate(value) {
-  if (!value) return '—';
-  return value;
-}
+          <div class="action-row">
+            <button id="export-markdown" class="secondary-btn">Export Markdown</button>
+            <button id="export-json" class="secondary-btn">Export JSON</button>
+            <button id="export-csv" class="secondary-btn">Export CSV</button>
+          </div>
 
-function renderEntries() {
-  const query = searchBox.value.trim().toLowerCase();
-  const category = categoryFilter.value;
-  const kind = kindFilter.value;
-  const status = statusFilter.value;
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Type</th>
+                  <th>Category</th>
+                  <th>Tags</th>
+                  <th>Text</th>
+                  <th>Due</th>
+                  <th>Created</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="entries-body"></tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+    </div>
 
-  const filtered = state.entries.filter((entry) => {
-    const rawText = [entry.text, entry.category, entry.status, ...(entry.tags || []), entry.due_at || '', entry.reminder_at || ''].join(' ').toLowerCase();
-    const matchesQuery = !query || rawText.includes(query);
-    const matchesCategory = !category || entry.category === category;
-    const matchesKind = !kind || entry.kind === kind;
-    const matchesStatus = !status || entry.status === status;
-    return matchesQuery && matchesCategory && matchesKind && matchesStatus;
-  });
+    <div id="editor-modal" class="modal hidden" aria-hidden="true">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>Edit entry</h3>
+          <button type="button" data-close-modal="true">Close</button>
+        </div>
+        <form id="edit-form">
+          <label>
+            <span>Text</span>
+            <textarea id="edit-text" name="text" rows="8" required></textarea>
+          </label>
+          <div class="meta-row">
+            <label>
+              <span>Category</span>
+              <input id="edit-category" name="category" type="text" />
+            </label>
+            <label>
+              <span>Status</span>
+              <select id="edit-status" name="status">
+                <option value="new">new</option>
+                <option value="active">active</option>
+                <option value="done">done</option>
+                <option value="blocked">blocked</option>
+              </select>
+            </label>
+          </div>
+          <div class="meta-row">
+            <label>
+              <span>Due date</span>
+              <input id="edit-due" type="date" name="due_at" />
+            </label>
+            <label>
+              <span>Reminder</span>
+              <input id="edit-reminder" type="datetime-local" name="reminder_at" />
+            </label>
+          </div>
+          <label>
+            <span>Tags</span>
+            <input id="edit-tags" name="tags" type="text" />
+          </label>
+          <button type="submit">Save changes</button>
+        </form>
+      </div>
+    </div>
 
-  entriesBody.innerHTML = filtered.map((entry) => `
-    <tr>
-      <td>${entry.kind}</td>
-      <td>${entry.category}</td>
-      <td>${renderTags(entry.tags)}</td>
-      <td>
-        <span class="status-pill ${entry.status || 'new'}">${entry.status || 'new'}</span><br>
-        ${entry.text}
-      </td>
-      <td>${formatDate(entry.due_at)}</td>
-      <td>${formatDate(entry.created_at)}</td>
-      <td class="actions">
-        <button data-action="edit" data-id="${entry.id}" type="button">Edit</button>
-        <button data-action="delete" data-id="${entry.id}" class="delete-btn" type="button">Delete</button>
-      </td>
-    </tr>
-  `).join('') || '<tr><td colspan="7">No entries found.</td></tr>';
-}
-
-async function loadDashboard() {
-  const status = await api('/api/status');
-  const entries = await api(`/api/entries?status=${encodeURIComponent(statusFilter.value || '')}&category=${encodeURIComponent(categoryFilter.value || '')}&query=${encodeURIComponent(searchBox.value.trim())}&sort_by=${encodeURIComponent(sortBy.value || 'created_at')}&order=${encodeURIComponent(orderBy.value || 'desc')}`);
-  if (!status || !entries) return;
-
-  state.status = status;
-  state.entries = entries;
-
-  document.getElementById('note-count').textContent = status.notes || 0;
-  document.getElementById('task-count').textContent = status.tasks || 0;
-  document.getElementById('category-count').textContent = (status.categories || []).length;
-
-  const categories = status.categories || [];
-  categoryFilter.innerHTML = '<option value="">All categories</option>' + categories.map((category) => `<option value="${category}">${category}</option>`).join('');
-
-  renderEntries();
-}
-
-async function submitEntry(kind) {
-  const form = kind === 'note' ? noteForm : taskForm;
-  const formData = new FormData(form);
-  const payload = {
-    kind,
-    text: formData.get('text').trim(),
-    category: (formData.get('category') || 'general').trim() || 'general',
-    tags: parseTags(String(formData.get('tags') || '')),
-    status: (formData.get('status') || 'new').trim() || 'new',
-    due_at: formData.get('due_at') || null,
-    reminder_at: formData.get('reminder_at') || null,
-  };
-
-  if (!payload.text) {
-    alert('Text is required');
-    return;
-  }
-
-  await api(`/api/${kind === 'note' ? 'notes' : 'tasks'}`, {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-
-  form.reset();
-  if (kind === 'note') {
-    noteForm.querySelector('[name="category"]').value = 'general';
-    noteForm.querySelector('[name="status"]').value = 'new';
-  } else {
-    taskForm.querySelector('[name="category"]').value = 'todo';
-    taskForm.querySelector('[name="status"]').value = 'new';
-  }
-  await loadDashboard();
-}
-
-async function deleteEntry(id) {
-  await api(`/api/entries/${id}`, { method: 'DELETE' });
-  await loadDashboard();
-}
-
-function openEditorModal(entry) {
-  state.editingId = entry.id;
-  document.getElementById('edit-text').value = entry.text || '';
-  document.getElementById('edit-category').value = entry.category || 'general';
-  document.getElementById('edit-status').value = entry.status || 'new';
-  document.getElementById('edit-due').value = entry.due_at ? entry.due_at.split('T')[0] : '';
-  document.getElementById('edit-reminder').value = entry.reminder_at ? entry.reminder_at.substring(0, 16) : '';
-  document.getElementById('edit-tags').value = (entry.tags || []).join(', ');
-  editorModal.classList.remove('hidden');
-  editorModal.setAttribute('aria-hidden', 'false');
-}
-
-function closeEditorModal() {
-  editorModal.classList.add('hidden');
-  editorModal.setAttribute('aria-hidden', 'true');
-  state.editingId = null;
-}
-
-async function editEntry(id) {
-  const entry = state.entries.find((item) => item.id === Number(id));
-  if (!entry) return;
-  openEditorModal(entry);
-}
-
-editForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  if (!state.editingId) return;
-
-  const formData = new FormData(editForm);
-  const payload = {
-    text: (formData.get('text') || '').toString().trim(),
-    category: (formData.get('category') || 'general').toString().trim() || 'general',
-    status: (formData.get('status') || 'new').toString().trim() || 'new',
-    due_at: formData.get('due_at') || null,
-    reminder_at: formData.get('reminder_at') || null,
-    tags: parseTags(String(formData.get('tags') || '')),
-  };
-
-  if (!payload.text) {
-    alert('Text is required');
-    return;
-  }
-
-  await api(`/api/entries/${state.editingId}`, {
-    method: 'PUT',
-    body: JSON.stringify(payload),
-  });
-  closeEditorModal();
-  await loadDashboard();
-});
-
-document.querySelector('[data-close-modal="true"]').addEventListener('click', closeEditorModal);
-editorModal.addEventListener('click', (event) => {
-  if (event.target === editorModal) closeEditorModal();
-});
-
-async function exportEntries(format) {
-  await api('/api/export', {
-    method: 'POST',
-    body: JSON.stringify({ format, path: '.memory/export' }),
-  });
-  alert(`Exported as ${format}`);
-}
-
-async function toggleTheme() {
-  document.body.classList.toggle('dark');
-  const isDark = document.body.classList.contains('dark');
-  localStorage.setItem('workspace-theme', isDark ? 'dark' : 'light');
-  themeToggle.textContent = isDark ? '☀️ Light' : '🌙 Dark';
-}
-
-noteForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  await submitEntry('note');
-});
-
-taskForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  await submitEntry('task');
-});
-
-searchBox.addEventListener('input', async () => {
-  await loadDashboard();
-});
-
-categoryFilter.addEventListener('change', loadDashboard);
-kindFilter.addEventListener('change', loadDashboard);
-statusFilter.addEventListener('change', loadDashboard);
-sortBy.addEventListener('change', loadDashboard);
-orderBy.addEventListener('change', loadDashboard);
-
-document.getElementById('refresh-btn').addEventListener('click', loadDashboard);
-document.getElementById('export-markdown').addEventListener('click', () => exportEntries('markdown'));
-document.getElementById('export-json').addEventListener('click', () => exportEntries('json'));
-document.getElementById('export-csv').addEventListener('click', () => exportEntries('csv'));
-
-document.addEventListener('click', async (event) => {
-  const target = event.target;
-  if (!(target instanceof HTMLElement)) return;
-  const action = target.dataset.action;
-  const id = target.dataset.id;
-  if (!action || !id) return;
-  if (action === 'delete') await deleteEntry(id);
-  if (action === 'edit') await editEntry(id);
-});
-
-themeToggle.addEventListener('click', toggleTheme);
-
-const savedTheme = localStorage.getItem('workspace-theme');
-if (savedTheme === 'dark') {
-  document.body.classList.add('dark');
-  themeToggle.textContent = '☀️ Light';
-}
-
-loadDashboard().catch((error) => {
-  console.error(error);
-  alert('Unable to load workspace memory');
-});
+    <script src="/static/app.js"></script>
+  </body>
+</html>
