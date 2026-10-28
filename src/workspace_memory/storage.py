@@ -5,7 +5,7 @@ import hashlib
 import json
 import re
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -13,6 +13,45 @@ from workspace_memory.models import MemoryEntry
 
 
 DEFAULT_MEMORY_DIR = Path(".memory")
+VALID_ENTRY_STATUSES = {"new", "active", "done", "blocked"}
+
+
+def normalize_entry_status(status: str | None, default: str = "new") -> str:
+    value = (status or default).strip().lower()
+    if not value:
+        value = default
+    if value not in VALID_ENTRY_STATUSES:
+        valid = ", ".join(sorted(VALID_ENTRY_STATUSES))
+        raise ValueError(f"Unsupported status: {status!r}. Valid statuses are: {valid}")
+    return value
+
+
+def normalize_entry_category(category: str | None, default: str) -> str:
+    value = (category or default).strip()
+    if not value:
+        value = default
+    return value
+
+
+def normalize_entry_tags(tags: Iterable[str] | None) -> list[str]:
+    return [tag.strip() for tag in (tags or []) if tag and tag.strip()]
+
+
+def normalize_entry_datetime(value: str | None, field_name: str) -> str | None:
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid {field_name}: {value!r}. Use ISO date or datetime values like YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ."
+        ) from exc
+    return value.strip()
 
 
 class MemoryStore:
@@ -126,6 +165,44 @@ class MemoryStore:
         with self._connect() as conn:
             return self._ensure_default_user(conn)
 
+    @staticmethod
+    def _coerce_datetime(value: str | None) -> datetime | None:
+        if not value:
+            return None
+        text = value.strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            return datetime.fromisoformat(text)
+        except ValueError:
+            try:
+                return datetime.strptime(text, "%Y-%m-%d")
+            except ValueError:
+                return None
+
+    def _is_overdue(self, entry: MemoryEntry) -> bool:
+        if entry.status in {"done", "blocked"}:
+            return False
+        due_at = self._coerce_datetime(entry.due_at)
+        if due_at is None:
+            return False
+        today = datetime.now(timezone.utc).date()
+        due_date = due_at.date()
+        return due_date < today
+
+    def _is_upcoming(self, entry: MemoryEntry, days: int = 7) -> bool:
+        if entry.status in {"done", "blocked"}:
+            return False
+        due_at = self._coerce_datetime(entry.due_at)
+        if due_at is None:
+            return False
+        today = datetime.now(timezone.utc).date()
+        due_date = due_at.date()
+        cutoff = today + timedelta(days=days)
+        return today <= due_date <= cutoff
+
     def create_user(self, username: str, password: str, display_name: str | None = None, role: str = "user", bio: str | None = None) -> dict[str, object]:
         if not username or not password:
             raise ValueError("Username and password are required.")
@@ -187,7 +264,7 @@ class MemoryStore:
 
         with self._connect() as conn:
             conn.execute(
-                "INSERT INTO profiles (user_id, display_name, role, bio, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET display_name = excluded.display_name, role = excluded.role, bio = excluded.bio",
+                "INSERT INTO profiles (user_id, display_name, role, bio, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET display_name = excluded.display_name, role = excluded.role, bio = excluded.bio, created_at = excluded.created_at",
                 (
                     user_id,
                     display_name or profile["display_name"],
@@ -204,15 +281,51 @@ class MemoryStore:
         return self.get_user_profile(user_id)
 
     def _tags_to_text(self, tags: Iterable[str]) -> str:
-        return ",".join(sorted({tag.strip().lower() for tag in tags if tag and tag.strip()}))
+        return ",".join(sorted({tag.strip().lower() for tag in normalize_entry_tags(tags) if tag and tag.strip()}))
 
     def add_note(self, text: str, category: str = "general", tags: Iterable[str] | None = None, status: str = "new", user_id: int | None = None, due_at: str | None = None, reminder_at: str | None = None) -> MemoryEntry:
-        entry = MemoryEntry(kind="note", text=text, category=category, tags=list(tags or []), status=status, due_at=due_at, reminder_at=reminder_at, created_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        cleaned_text = (text or "").strip()
+        if not cleaned_text:
+            raise ValueError("Text cannot be empty.")
+        cleaned_category = normalize_entry_category(category, "general")
+        cleaned_tags = normalize_entry_tags(tags)
+        cleaned_status = normalize_entry_status(status)
+        cleaned_due_at = normalize_entry_datetime(due_at, "due_at")
+        cleaned_reminder_at = normalize_entry_datetime(reminder_at, "reminder_at")
+
+        entry = MemoryEntry(
+            kind="note",
+            text=cleaned_text,
+            category=cleaned_category,
+            tags=cleaned_tags,
+            status=cleaned_status,
+            due_at=cleaned_due_at,
+            reminder_at=cleaned_reminder_at,
+            created_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
         self._insert(entry, user_id=user_id)
         return entry
 
     def add_task(self, text: str, category: str = "todo", tags: Iterable[str] | None = None, status: str = "new", user_id: int | None = None, due_at: str | None = None, reminder_at: str | None = None) -> MemoryEntry:
-        entry = MemoryEntry(kind="task", text=text, category=category, tags=list(tags or []), status=status, due_at=due_at, reminder_at=reminder_at, created_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        cleaned_text = (text or "").strip()
+        if not cleaned_text:
+            raise ValueError("Text cannot be empty.")
+        cleaned_category = normalize_entry_category(category, "todo")
+        cleaned_tags = normalize_entry_tags(tags)
+        cleaned_status = normalize_entry_status(status)
+        cleaned_due_at = normalize_entry_datetime(due_at, "due_at")
+        cleaned_reminder_at = normalize_entry_datetime(reminder_at, "reminder_at")
+
+        entry = MemoryEntry(
+            kind="task",
+            text=cleaned_text,
+            category=cleaned_category,
+            tags=cleaned_tags,
+            status=cleaned_status,
+            due_at=cleaned_due_at,
+            reminder_at=cleaned_reminder_at,
+            created_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
         self._insert(entry, user_id=user_id)
         return entry
 
@@ -220,22 +333,23 @@ class MemoryStore:
         owner_id = user_id if user_id is not None else self._default_user_id()
         now = entry.created_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         with self._connect() as conn:
-            conn.execute(
+            cursor = conn.execute(
                 "INSERT INTO entries (user_id, kind, text, category, tags, status, due_at, reminder_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     owner_id,
                     entry.kind,
                     entry.text,
-                    entry.category,
+                    normalize_entry_category(entry.category, "general"),
                     self._tags_to_text(entry.normalized_tags),
-                    getattr(entry, "status", "new"),
-                    entry.due_at,
-                    entry.reminder_at,
+                    normalize_entry_status(entry.status),
+                    normalize_entry_datetime(entry.due_at, "due_at"),
+                    normalize_entry_datetime(entry.reminder_at, "reminder_at"),
                     now,
                     now,
                 ),
             )
             conn.commit()
+            entry.id = int(cursor.lastrowid)
 
     def list_entries(
         self,
@@ -272,7 +386,7 @@ class MemoryStore:
             params.append(f"%{text_query.lower()}%")
         if status:
             sql += " AND LOWER(status) = LOWER(?)"
-            params.append(status)
+            params.append(normalize_entry_status(status))
         if due_before:
             sql += " AND due_at IS NOT NULL AND due_at <= ?"
             params.append(due_before)
@@ -298,6 +412,7 @@ class MemoryStore:
         for row in rows:
             tags = [item.strip() for item in (row["tags"] or "").split(",") if item.strip()]
             entry = MemoryEntry(
+                id=row["id"],
                 kind=row["kind"],
                 text=row["text"],
                 category=row["category"],
@@ -310,6 +425,27 @@ class MemoryStore:
             entries.append(entry)
         return entries
 
+    def list_overdue_tasks(self, user_id: int | None = None) -> list[MemoryEntry]:
+        entries = self.list_entries(user_id=user_id, sort_by="due_at", order="asc")
+        return [entry for entry in entries if entry.kind == "task" and self._is_overdue(entry)]
+
+    def list_upcoming_tasks(self, user_id: int | None = None, days: int = 7) -> list[MemoryEntry]:
+        entries = self.list_entries(user_id=user_id, sort_by="due_at", order="asc")
+        return [entry for entry in entries if entry.kind == "task" and self._is_upcoming(entry, days=days)]
+
+    def task_summary(self, user_id: int | None = None) -> dict[str, object]:
+        entries = self.list_entries(user_id=user_id)
+        tasks = [entry for entry in entries if entry.kind == "task"]
+        counts = {status: 0 for status in sorted(VALID_ENTRY_STATUSES)}
+        for entry in tasks:
+            counts[entry.status] = counts.get(entry.status, 0) + 1
+        return {
+            "total_tasks": len(tasks),
+            "overdue": len(self.list_overdue_tasks(user_id=user_id)),
+            "upcoming": len(self.list_upcoming_tasks(user_id=user_id, days=7)),
+            "status_counts": counts,
+        }
+
     def update_entry(self, entry_id: int, *, user_id: int | None = None, text: str | None = None, category: str | None = None, tags: Iterable[str] | None = None, status: str | None = None, due_at: str | None = None, reminder_at: str | None = None) -> MemoryEntry | None:
         with self._connect() as conn:
             row = conn.execute(
@@ -319,25 +455,29 @@ class MemoryStore:
             if row is None:
                 return None
 
-            updated_text = text if text is not None else row["text"]
-            updated_category = category if category is not None else row["category"]
-            updated_tags = self._tags_to_text(tags if tags is not None else [item.strip() for item in (row["tags"] or "").split(",") if item.strip()])
-            updated_status = status if status is not None else row["status"]
-            updated_due = due_at if due_at is not None else row["due_at"]
-            updated_reminder = reminder_at if reminder_at is not None else row["reminder_at"]
+            updated_text = (text or row["text"]).strip()
+            if not updated_text:
+                raise ValueError("Text cannot be empty.")
+
+            updated_category = normalize_entry_category(category, row["category"])
+            updated_tags = normalize_entry_tags(tags if tags is not None else [item.strip() for item in (row["tags"] or "").split(",") if item.strip()])
+            updated_status = normalize_entry_status(status or row["status"])
+            updated_due = normalize_entry_datetime(due_at if due_at is not None else row["due_at"], "due_at")
+            updated_reminder = normalize_entry_datetime(reminder_at if reminder_at is not None else row["reminder_at"], "reminder_at")
             updated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
             conn.execute(
                 "UPDATE entries SET text = ?, category = ?, tags = ?, status = ?, due_at = ?, reminder_at = ?, updated_at = ? WHERE id = ?",
-                (updated_text, updated_category, updated_tags, updated_status, updated_due, updated_reminder, updated_at, entry_id),
+                (updated_text, updated_category, self._tags_to_text(updated_tags), updated_status, updated_due, updated_reminder, updated_at, entry_id),
             )
             conn.commit()
 
         return MemoryEntry(
+            id=entry_id,
             kind=row["kind"],
             text=updated_text,
             category=updated_category,
-            tags=[item.strip() for item in updated_tags.split(",") if item.strip()],
+            tags=updated_tags,
             status=updated_status,
             due_at=updated_due,
             reminder_at=updated_reminder,
@@ -389,7 +529,14 @@ class MemoryStore:
 
     def _markdown_entry_pattern(self) -> re.Pattern[str]:
         return re.compile(
-            r"^\[(?P<created>[^\]]+)\]\s+\[(?P<category>[^\]]+)\]\s+\[(?P<status>[^\]]+)\](?P<rest>.*)$"
+            r"^-\s+\[(?P<kind>note|task)\]\s+\[(?P<created>[^\]]+)\]\s+\[(?P<category>[^\]]+)\]\s+\[(?P<status>[^\]]+)\](?P<rest>.*)$",
+            flags=re.IGNORECASE,
+        )
+
+    def _legacy_markdown_entry_pattern(self) -> re.Pattern[str]:
+        return re.compile(
+            r"^-\s+\[(?P<created>[^\]]+)\]\s+\[(?P<category>[^\]]+)\]\s+\[(?P<status>[^\]]+)\](?P<rest>.*)$",
+            flags=re.IGNORECASE,
         )
 
     def _parse_markdown_entry(self, line: str) -> tuple[str, str, str, list[str], str | None, str | None, str] | None:
@@ -404,47 +551,58 @@ class MemoryStore:
             return kind, "general", "new", [], None, None, alt.group("text").strip()
 
         match = self._markdown_entry_pattern().match(content)
-        if not match:
-            return None
+        if match is None:
+            match = self._legacy_markdown_entry_pattern().match(content)
+            if match is None:
+                return None
+            kind = "note"
+            created_at = match.group("created")
+            category = match.group("category")
+            status = match.group("status")
+            rest = match.group("rest")
+        else:
+            kind = match.group("kind").lower()
+            created_at = match.group("created")
+            category = match.group("category")
+            status = match.group("status")
+            rest = match.group("rest")
 
-        created_at = match.group("created")
-        category = match.group("category")
-        status = match.group("status")
-        rest = match.group("rest")
         due_at = None
         reminder_at = None
         tags: list[str] = []
         text = rest.strip()
 
-        while True:
-            due_match = re.match(r"^\s+\[due:(?P<value>[^\]]+)\](?P<remaining>.*)$", text)
-            if due_match:
-                due_at = due_match.group("value").strip()
-                text = due_match.group("remaining").strip()
+        while text:
+            if text.startswith(" [due:"):
+                due_end = text.find("]")
+                if due_end == -1:
+                    break
+                due_at = text[6:due_end].strip()
+                text = text[due_end + 1 :].strip()
                 continue
-
-            reminder_match = re.match(r"^\s+\[reminder:(?P<value>[^\]]+)\](?P<remaining>.*)$", text)
-            if reminder_match:
-                reminder_at = reminder_match.group("value").strip()
-                text = reminder_match.group("remaining").strip()
+            if text.startswith(" [reminder:"):
+                reminder_end = text.find("]")
+                if reminder_end == -1:
+                    break
+                reminder_at = text[11:reminder_end].strip()
+                text = text[reminder_end + 1 :].strip()
                 continue
-
-            tag_match = re.match(r"^\s+\[(?P<value>[^\]]+)\](?P<remaining>.*)$", text)
-            if tag_match:
-                tag_value = tag_match.group("value").strip()
-                tags = [item.strip() for item in tag_value.split(",") if item.strip()]
-                text = tag_match.group("remaining").strip()
+            if text.startswith(" ["):
+                bracket_end = text.find("]")
+                if bracket_end == -1:
+                    break
+                tag_value = text[2:bracket_end].strip()
+                if tag_value:
+                    tags.extend([item.strip() for item in tag_value.split(",") if item.strip()])
+                text = text[bracket_end + 1 :].strip()
                 continue
             break
 
-        kind = "note"
-        if text.startswith("task:"):
-            kind = "task"
-            text = text[5:].strip()
-        elif text.startswith("note:"):
-            text = text[5:].strip()
+        text = text.strip()
+        if not text and kind == "note":
+            text = created_at
 
-        return kind, category, status, tags, due_at, reminder_at, text.strip()
+        return kind, category, status, sorted(set(tags)), due_at, reminder_at, text
 
     def _list_for_export(self, user_id: int | None = None) -> list[MemoryEntry]:
         return self.list_entries(user_id=user_id)
@@ -462,10 +620,11 @@ class MemoryStore:
         target = Path(file_path)
         target.parent.mkdir(parents=True, exist_ok=True)
         with target.open("w", newline="", encoding="utf-8") as handle:
-            writer = csv.DictWriter(handle, fieldnames=["kind", "text", "category", "tags", "status", "due_at", "reminder_at", "created_at"])
+            writer = csv.DictWriter(handle, fieldnames=["id", "kind", "text", "category", "tags", "status", "due_at", "reminder_at", "created_at"])
             writer.writeheader()
             for entry in self._list_for_export(user_id=user_id):
                 writer.writerow({
+                    "id": entry.id or "",
                     "kind": entry.kind,
                     "text": entry.text,
                     "category": entry.category,
@@ -482,6 +641,7 @@ class MemoryStore:
         target.parent.mkdir(parents=True, exist_ok=True)
         payload = [
             {
+                "id": entry.id,
                 "kind": entry.kind,
                 "text": entry.text,
                 "category": entry.category,
@@ -619,4 +779,16 @@ def summarize_entries(paths: Iterable[Path]) -> list[str]:
     return [str(path) for path in paths]
 
 
-__all__ = ["MemoryStore", "DEFAULT_MEMORY_DIR", "ensure_workspace"]
+__all__ = [
+    "MemoryStore",
+    "DEFAULT_MEMORY_DIR",
+    "VALID_ENTRY_STATUSES",
+    "ensure_workspace",
+    "normalize_entry_category",
+    "normalize_entry_datetime",
+    "normalize_entry_status",
+    "normalize_entry_tags",
+]
+
+
+# Batch A: task lifecycle and reminder automation helpers.
